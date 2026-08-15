@@ -34,14 +34,23 @@ def _run_humaneval(prompt: str, completion: str, test: str, entry: str, timeout:
         return r.returncode == 0
 
 
-def run_code(client, limit: int | None) -> list[dict]:
+def run_code(client, limit: int | None, session=None) -> list[dict]:
+    from .journal import emit, gate
+
     rows = []
     for item in take(read_jsonl("humaneval.jsonl"), 20 if limit is None else min(limit, 20)):
+        key = str(item.get("task_id") or "unknown")
+        g = gate(session, "code", key)
+        if g == "stop":
+            return rows
+        if isinstance(g, dict):
+            rows.append(g)
+            continue
         prompt = item["prompt"]
         out = client.complete(
             "Complete the following Python function. Output only code.\n\n" + prompt,
             max_tokens=512,
         )
         ok = _run_humaneval(prompt, out["text"] or "", item["test"], item["entry_point"])
-        rows.append({"id": item.get("task_id"), "ok": ok, "pred": (out["text"] or "")[:200]})
+        rows.append(emit(session, "code", key, {"ok": ok, "pred": (out["text"] or "")[:200]}))
     return rows

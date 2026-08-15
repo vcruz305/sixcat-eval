@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping
 
 CATEGORIES = ("knowledge", "math", "truth", "instruct", "code", "tools")
 
-_LETTER = re.compile(r"\b([A-D])\b", re.I)
+_LETTER = re.compile(r"\b([A-L])\b", re.I)
 _HASH_NUM = re.compile(r"####\s*(-?[\d,]+(?:\.\d+)?)")
 _LAST_NUM = re.compile(r"(-?[\d,]+(?:\.\d+)?)")
 
@@ -34,7 +34,7 @@ def extract_mc_letter(text: str) -> str | None:
     if not text:
         return None
     # prefer last "answer is X" / lone letter
-    m = re.search(r"(?:answer\s*(?:is|:)\s*)\(?([A-D])\)?", text, re.I)
+    m = re.search(r"(?:answer\s*(?:is|:)\s*)\(?([A-L])\)?", text, re.I)
     if m:
         return m.group(1).upper()
     letters = _LETTER.findall(text)

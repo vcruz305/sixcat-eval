@@ -102,15 +102,24 @@ def _first_name(tool_calls: list[Any]) -> str | None:
     return None
 
 
-def run_tools(client, limit: int | None) -> list[dict]:
+def run_tools(client, limit: int | None, session=None) -> list[dict]:
+    from .journal import emit, gate
+
     items = ITEMS if limit is None else ITEMS[:limit]
     rows = []
-    for key, want, prompt in items:
+    for name, want, prompt in items:
+        key = f"tool:{name}"
+        g = gate(session, "tools", key)
+        if g == "stop":
+            return rows
+        if isinstance(g, dict):
+            rows.append(g)
+            continue
         out = client.complete(prompt, max_tokens=128, tools=TOOLS)
-        name = _first_name(out["tool_calls"])
+        called = _first_name(out["tool_calls"])
         if want is None:
-            ok = name is None and bool((out["text"] or "").strip())
+            ok = called is None and bool((out["text"] or "").strip())
         else:
-            ok = name == want
-        rows.append({"id": key, "ok": ok, "pred": name or (out["text"] or "")[:80]})
+            ok = called == want
+        rows.append(emit(session, "tools", key, {"ok": ok, "pred": called or (out["text"] or "")[:80]}))
     return rows

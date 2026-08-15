@@ -26,20 +26,20 @@ This is **not** a replacement for the full Open LLM Leaderboard, MixEval-Hard, o
 1. **[Score contract](#score-contract)** — six buckets, one average.
 2. **[Categories](#categories)** — what each number is.
 3. **[Quick start](#quick-start)** — one command against `:8085`.
-4. **[Full vs smoke](#full-vs-smoke)** — item counts and wall time.
+4. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
 5. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
 
 **Jump to:** [Install](#quick-start) · [Categories](#categories) · [Method](#method)
 
 ## Score contract
 
-| Category | Source | Full n | Metric |
+| Category | Source | Default n | Metric |
 |---|---|---:|---|
-| Knowledge | tinyMMLU + tinyARC + tinyHellaSwag + tinyWinogrande | 400 | letter match |
-| Math | tinyGSM8K | 100 | `####` number match |
-| Truth | tinyTruthfulQA (mc1) | 100 | letter match |
-| Instruct | IFEval first 100 prompts | 100 | all listed constraints pass |
-| Code | HumanEval first 20 | 20 | `pass@1` via local exec |
+| Knowledge | tinyMMLU + tinyARC + tinyHellaSwag + tinyWinogrande | 80 (20×4) | letter match |
+| Math | tinyGSM8K | 20 | `####` number match |
+| Truth | tinyTruthfulQA (mc1) | 20 | letter match |
+| Instruct | IFEval | 20 | all listed constraints pass |
+| Code | HumanEval | 20 | `pass@1` via local exec |
 | Tools | 20 scripted function-call items | 20 | correct tool name (or none) |
 
 tiny* sets are the 100-item IRT anchors from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks) / [HF](https://huggingface.co/tinyBenchmarks). IFEval IDs follow [google-research/instruction_following_eval](https://github.com/google-research/google-research/tree/master/instruction_following_eval). HumanEval is the OpenAI set.
@@ -66,17 +66,18 @@ Python 3.11+. No extra packages.
 git clone https://github.com/vcruz305/sixcat-eval
 cd sixcat-eval
 
-# server must already be up
-python -m sixcat --base-url http://127.0.0.1:8085/v1 --model qwen38-27b --limit 3 --out smoke.json
+python -m sixcat --base-url http://127.0.0.1:8085/v1 --model qwen38-27b --out run.json
 ```
 
-Full battery (omit `--limit`):
+Default is `--limit 20` and `--max-minutes 30`. Each item is appended to `run.jsonl` as it finishes. Crash the box, rerun the same command: it prints `SKIP` for done keys and continues. `--no-resume` starts a new log.
 
-```bash
-python -m sixcat --base-url http://127.0.0.1:8085/v1 --model qwen38-27b --out full.json
+```text
+PASS knowledge/mmlu:3 pred=B gold=B
+FAIL math/gsm:1 pred=12 gold=29
+TIMEUP before instruct/ifeval:1005
 ```
 
-`--limit N` caps **each dataset** (knowledge has four datasets, so knowledge n = 4N).
+`--full` is 740 items. It still stops at 30 minutes unless you pass `--max-minutes 0`.
 
 Thinking is forced off via `chat_template_kwargs.enable_thinking=false`. Temperature 0.
 
@@ -84,8 +85,9 @@ Thinking is forced off via `chat_template_kwargs.enable_thinking=false`. Tempera
 
 | | Items | Typical wall on Quadro RTX 6000 @ ~24 tg |
 |---|---:|---|
+| default (`--limit 20`) | ~180 | **≤30 min** |
 | `--limit 3` | ~47 | a few minutes |
-| full | 740 | ~30–45 min |
+| `--full` | 740 | can exceed 1 hour — not the daily run |
 
 Do not compare a `--limit` smoke to a full row.
 
