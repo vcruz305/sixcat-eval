@@ -21,15 +21,26 @@ overall          43.8
 
 This is **not** a replacement for the full Open LLM Leaderboard, MixEval-Hard, or SWE-bench. It is the daily driver you can finish on a 24 GB card before lunch.
 
+## Why
+
+I ship GGUF packs and need a number I can trust the same afternoon, on the same card that will run the file.
+
+Full MMLU, MATH, LiveCodeBench, and MixEval-Hard are the right *subjects*. They are the wrong *wall clock* on a Quadro RTX 6000 at ~24 tok/s. A 740-item “complete” pass blew past an hour here. That is useless for comparing Q4 vs Q3 vs a challenger before you upload.
+
+So this tool takes the suites people already quote — tinyBenchmarks anchors, IFEval, HumanEval, a small tool-call set — and scores them as six categories plus one unweighted overall. Default cap is 30 minutes. Each item is flushed to a JSONL log so a crash or a killed job can resume instead of starting over.
+
+If you want the academic 740, pass `--full --max-minutes 0`. That is opt-in. The default is the run you can actually finish.
+
 ## What's in here
 
-1. **[Score contract](#score-contract)** — six buckets, one average.
-2. **[Categories](#categories)** — what each number is.
-3. **[Quick start](#quick-start)** — one command against `:8085`.
-4. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
-5. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
+1. **[Why](#why)** — 30 minutes, six community subjects, one overall.
+2. **[Score contract](#score-contract)** — six buckets, one average.
+3. **[Categories](#categories)** — what each number is.
+4. **[Quick start](#quick-start)** — one command against `:8085`.
+5. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
+6. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
 
-**Jump to:** [Install](#quick-start) · [Categories](#categories) · [Method](#method)
+**Jump to:** [Why](#why) · [Install](#quick-start) · [Categories](#categories) · [Method](#method)
 
 ## Score contract
 
