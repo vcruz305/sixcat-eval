@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
             cat: [{"id": r.get("id"), "ok": r.get("ok"), "pred": r.get("pred"), "gold": r.get("gold")} for r in rows]
             for cat, rows in result["items"].items()
         }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(slim, indent=2), encoding="utf-8")
         print(f"\nwrote {args.out}")
     return 0
