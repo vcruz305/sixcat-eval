@@ -1,3 +1,5 @@
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/78f2fd46-8669-4176-9282-635f83582c6d" />
+
 # sixcat-eval
 
 Six community LLM categories. One overall number. Minutes, not hours.
