@@ -9,6 +9,11 @@ all 29 reviewed model families, scorer/parser v4, speed receipts, comparison, an
 
 ## Top features
 
+- **Run the model behind your current Hermes agent.** The bundled `/sixcat-eval`
+  skill asks whether to test the current session model, another Hermes profile, or
+  an alternate endpoint. For Hermes profiles it bypasses the agent facade and
+  evaluates the pinned raw provider model through a temporary authenticated
+  loopback proxy that closes automatically.
 - **A useful daily run with a 30-minute cap.** Six community categories roll into one
   unweighted overall; every completed item is journaled so interrupted runs resume instead
   of starting over.
@@ -77,22 +82,23 @@ If you want all 884 shipped rows, pass `--full --max-minutes 0`. That is opt-in.
 3. **[Score contract](#score-contract)** — six buckets, one average.
 4. **[Categories](#categories)** — what each number is.
 5. **[Quick start](#quick-start)** — one command against `:8085`.
-6. **[Hermes workflow](#hermes-workflow)** — conversational detection, policy preview, and live status.
-7. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
-8. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
+6. **[Hermes workflow](#hermes-workflow)** — current-profile raw-model evaluation and live receipts.
+7. **[Hermes question preview](#question-preview)** — every choice shown before a run starts.
+8. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
+9. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
 
-**Jump to:** [Top features](#top-features) · [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Categories](#categories) · [Method](#method) · [0.2.0 notes](RELEASE_NOTES.md)
+**Jump to:** [Top features](#top-features) · [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Question preview](#question-preview) · [Categories](#categories) · [Method](#method) · [0.4.0 notes](RELEASE_NOTES.md)
 
 ## Score contract
 
 | Category | Source | Default n | Metric |
 |---|---|---:|---|
-| Knowledge | tinyMMLU + tinyARC + tinyHellaSwag + tinyWinogrande | 80 (20×4) | letter match |
+| Knowledge | tinyMMLU + tinyARC + tinyHellaSwag + tinyWinogrande | 20 total | letter match |
 | Math | tinyGSM8K | 20 | `####` number match |
 | Truth | tinyTruthfulQA (mc1) | 20 | letter match |
 | Instruct | IFEval | 20 | all listed constraints pass |
 | Code | HumanEval | 20 | `pass@1` via host-guarded subprocess |
-| Tools | 20 scripted function-call items | 20 | correct tool name (or none) |
+| Tools | 20 structured function-call challenges | 20 | exact calls, arguments, order, or abstention |
 
 tiny* sets are the 100-item IRT anchors from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks) / [HF](https://huggingface.co/tinyBenchmarks). IFEval IDs follow [google-research/instruction_following_eval](https://github.com/google-research/google-research/tree/master/instruction_following_eval). HumanEval is the OpenAI set.
 
@@ -155,37 +161,174 @@ TIMEUP before instruct/ifeval:1005
 
 ## Hermes workflow
 
+The repository ships a project-local Hermes skill at
+[`.hermes/skills/sixcat-eval/`](.hermes/skills/sixcat-eval/). It turns endpoint
+selection, sampling policy, run scope, safety choices, live progress, and final
+verification into one conversational `/sixcat-eval` workflow.
+
+### Install and invoke
+
 Current Hermes Agent versions discover project-local skills under `.hermes/skills/`.
-After cloning, trust this repository once, then invoke the conversational operator:
+After cloning, trust this repository once and start Hermes from the project root:
 
 ```bash
+git clone https://github.com/vcruz305/sixcat-eval
 cd sixcat-eval
+python -m pip install -e .
 hermes skills trust
 hermes
 ```
+
+Then invoke:
 
 ```text
 /sixcat-eval
 ```
 
-`/sixcat-eval` asks for the target **before probing anything**. The recommended
-choice is the exact model backing the current Hermes session; you can instead choose another
-Hermes profile or an alternate OpenAI-compatible endpoint.
+### What the skill does
 
-For the current-session/profile choices, Sixcat does **not** benchmark Hermes' normal API-server
-agent facade (which adds profile instructions, tools, memory, and an agent loop). It resolves that
-profile's provider authentication, pins the exact model/provider, and creates a temporary
-authenticated loopback proxy that calls the raw model with the reviewed Sixcat sampling policy.
-The proxy is owned by the tracked run and closes automatically. Alternate endpoints still use
-`/v1/models` discovery.
+1. **Asks for the target before probing anything.** It offers the exact model
+   powering the current Hermes session, another Hermes profile, or an alternate
+   OpenAI-compatible endpoint.
+2. **Shows the real identity.** Current/profile mode resolves the exact profile,
+   provider, and model, including the current session's model override. Alternate
+   endpoint mode verifies the selected model through `/v1/models`.
+3. **Previews the complete policy.** Before execution it shows temperature,
+   top-p/top-k/min-p, thinking state, seed, category budgets, cited source,
+   selection profile, and policy fingerprint in plain English.
+4. **Asks four explicit run questions.** Sampling, size, HumanEval execution, and
+   thinking are independently selectable; dependent Custom values are collected
+   afterward.
+5. **Prints the exact run receipt.** Target, command, result path, JSONL journal,
+   timeout, policy fingerprint, and code mode are restated without credentials.
+6. **Runs in a tracked background process.** The skill reports category
+   transitions, rows, pass/fail counts, truncations, loops, parse-confidence
+   warnings, and saved receipt paths without flooding the chat per item.
+7. **Verifies before reporting.** A zero exit code is not enough: the expected
+   final JSON must exist, identity must remain pinned, and timeouts or incomplete
+   evidence are labelled honestly.
 
-Hermes then shows the exact target and explains temperature, token filters, thinking, and seed in
-plain English. Its emoji-labelled questions offer vendor-recommended temperature/settings when a
-reviewed mapping exists, or custom sampling first for unknown/stealth models. It then asks for
-Standard/Quick/Full/Custom size, explains host-guarded HumanEval, and separately asks whether
-thinking should be On or Off before starting a tracked run.
-The run reports live JSONL status plus final self-auditing receipts. It never starts, stops, or swaps the
-actual model server. Project trust is stored in the user's Hermes config, not this repo.
+### How current-profile evaluation works
+
+Hermes' normal OpenAI-compatible API server is an **agent facade**. It adds the
+profile's system prompt, tools, memory, and agent loop, and its `/v1/models` entry
+can be a profile alias. That is useful for agent clients but is not a raw-model
+benchmark.
+
+For **Current Hermes session model** or **Another Hermes profile**, the bundled
+`hermes_runner.py` instead:
+
+- resolves the profile's existing provider authentication without printing it;
+- pins the exact profile, provider, and model identity;
+- starts a short-lived authenticated loopback proxy owned by the tracked run;
+- forwards Sixcat requests directly to the raw provider model with the selected
+  sampling parameters;
+- rejects silent model/provider fallback after any request; and
+- closes the proxy in `finally` on success, failure, timeout, or interruption.
+
+It does **not** kill, swap, launch, or rebind the user's actual model server. For an
+**Alternate OpenAI-compatible endpoint**, the skill uses the existing server's
+`/v1/models` and `/v1/chat/completions` interfaces. Authenticated alternate
+endpoints keep their credential in `SIXCAT_API_KEY`; the key is never placed in
+commands, chat, journals, or final artifacts.
+
+### Question preview
+
+The skill asks the target question first:
+
+> 🎯 **Do you want to run Sixcat against the model I am currently running,
+> another Hermes profile, or an alternate OpenAI-compatible endpoint?**
+
+- **🧠 Current Hermes session model (recommended)** — evaluate the exact raw model
+  and provider powering the conversation, without the agent persona, tools,
+  memory, or conversation.
+- **👤 Another Hermes profile** — evaluate that profile's configured default model
+  using its already-configured provider authentication.
+- **🔌 Alternate OpenAI-compatible endpoint** — evaluate an already-running server
+  selected through its `/v1/models` identity.
+
+After showing the exact target and policy preview, Hermes presents these four
+questions together:
+
+#### A. 🎛️ How should the model sample answers?
+
+When a reviewed model-card mapping exists:
+
+- **🏷️ Vendor-recommended temperature/settings (recommended)** — cited
+  temperature and token filters, plus seed `1` where supported. Thinking is chosen
+  separately.
+- **🔬 Compare baseline vs vendor settings** — run deterministic and reviewed
+  settings separately, then show a labelled delta.
+- **🧊 Deterministic temperature baseline** — temperature `0`, no seed unless
+  explicitly supplied.
+- **🎛️ Custom sampling** — choose exact temperature and optional token filters.
+
+For an unknown or stealth model, **Custom sampling** becomes the recommendation,
+followed by the deterministic baseline. Sixcat does not offer a fake vendor
+comparison when no reviewed mapping exists. Custom uses this follow-up template:
+
+```text
+temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
+```
+
+#### B. 📏 How large should the evaluation be?
+
+- **⚖️ Standard (recommended)** — 20 challenge-selected rows per category, about
+  120 total, with a 30-minute safety cap.
+- **⚡ Quick smoke** — 3 hard-first rows per category, about 18 total, with a
+  10-minute cap. Useful for plumbing checks, not a final ranking.
+- **🧭 Full battery** — all 884 shipped rows with no wall cap; this can exceed an
+  hour and cost substantially more on hosted models.
+- **🛠️ Custom size** — choose rows per category and wall-clock minutes. A zero
+  minute cap means uncapped.
+
+#### C. 🧪 Should Sixcat execute generated HumanEval code?
+
+- **🛡️ Host-guarded HumanEval (recommended)** — run generated Python in a
+  short-lived subprocess with isolated flags, a sanitized environment, temp
+  directory, timeout, AST escape checks, restricted imports/builtins, and a
+  harness-owned success receipt. This is **not a security sandbox**.
+- **🚫 Skip generated-code execution** — Code becomes `n/a`, is omitted from the
+  overall mean, and the receipt is flagged `code-exec-disabled`.
+
+#### D. 🧠 Should reasoning/thinking be enabled?
+
+- **🧠 Thinking on (recommended when supported)** — use the reasoning mode and
+  larger category budgets. This measures a reasoning model's stronger intended
+  mode but may be slower and more expensive.
+- **⚡ Thinking off** — faster, cheaper, and broadly compatible; appropriate for a
+  latency baseline or an endpoint that cannot expose reasoning.
+
+Thinking On is recommended unless the inspected model/provider is known not to
+support reasoning traces. A fail-closed pre-run probe verifies that the endpoint
+actually honors the selected state before any scored row starts.
+
+### What appears before execution
+
+The final preview is designed to be sufficient even if the user never opened this
+README. It includes:
+
+```text
+target kind:       Hermes runtime model / alternate endpoint
+profile:           current or selected profile
+model + provider:  exact pinned identities
+sampling:          temperature, top-p, top-k, min-p, seed
+thinking:          on/off + category token budgets
+selection:         challenge-v1 + fingerprint
+scope:             Quick / Standard / Full / Custom
+code execution:    host-guarded / disabled
+wall cap:          exact minutes
+artifacts:         final JSON + live JSONL journal
+```
+
+New runs use fresh receipt paths and `--no-resume`. Resume is allowed only after
+model, provider, endpoint, policy fingerprint, budgets, parser, selection
+fingerprint, limit scope, timeout, code mode, and prior journal identity all match.
+The skill never silently resumes across model-server sessions.
+
+Project trust is stored in the user's Hermes configuration, not in this repository.
+The complete operator contract is in
+[`.hermes/skills/sixcat-eval/SKILL.md`](.hermes/skills/sixcat-eval/SKILL.md).
 
 ## Full vs smoke
 
