@@ -9,7 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .dataio import read_jsonl, take
+from .dataio import read_jsonl
+from .selection import CODE_CHALLENGE_IDS, select_by_ids
 
 
 _ALLOWED_IMPORTS = frozenset(
@@ -256,7 +257,13 @@ def run_code(
         return []
     mt = 1024 if max_tokens is None else max_tokens
     rows = []
-    for item in take(read_jsonl("humaneval.jsonl"), 20 if limit is None else min(limit, 20)):
+    items = select_by_ids(
+        read_jsonl("humaneval.jsonl"),
+        limit,
+        CODE_CHALLENGE_IDS,
+        key=lambda item: str(item.get("task_id") or ""),
+    )
+    for item in items:
         key = str(item.get("task_id") or "unknown")
         g = gate(session, "code", key)
         if g == "stop":

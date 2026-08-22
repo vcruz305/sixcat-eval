@@ -61,7 +61,7 @@ class TestResultLoading(unittest.TestCase):
         self.assertEqual(warning_text.count("WARNING: LEGACY V1 RESULT"), 2)
         self.assertIn("policy=strict", warning_text)
         self.assertIn("parser=v1", warning_text)
-        self.assertIn("not comparable to current strict/parser-v3", warning_text)
+        self.assertIn("not comparable to current strict/parser-v4", warning_text)
         self.assertEqual(first["policy"]["name"], "strict")
         self.assertEqual(first["parser"], "v1")
         self.assertEqual(first["policy_source"], "legacy-v1-assumption")
@@ -329,6 +329,11 @@ class TestComparison(unittest.TestCase):
         b = json.loads(json.dumps(a))
         a["limit"], b["limit"] = 3, None
         cases.append(("limit", a, b))
+
+        a = _current_document()
+        b = json.loads(json.dumps(a))
+        a["limit_scope"], b["limit_scope"] = "per_category", "per_dataset"
+        cases.append(("limit_scope", a, b))
 
         a = _current_document()
         b = json.loads(json.dumps(a))

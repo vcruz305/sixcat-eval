@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .client import ChatClient
 from .journal import RunJournal, Session, TimeBudget
-from .policy import resolve_policy
+from .policy import custom_policy, override_thinking, resolve_policy
 from .report import (
     PARSER_VERSION,
     RESULT_SCHEMA,
@@ -21,6 +21,7 @@ from .report import (
     render_both_table,
 )
 from .run import CATEGORIES, render_table, run_battery
+from .selection import SELECTION_FINGERPRINT, SELECTION_PROFILE
 
 
 def parse_budget_overrides(specs: list[str]) -> dict[str, int]:
@@ -61,6 +62,9 @@ def _journal_identity(
         "policy_fingerprint": policy.fingerprint,
         "budgets": dict(policy.budgets),
         "limit": limit,
+        "limit_scope": "per_category",
+        "selection_profile": SELECTION_PROFILE,
+        "selection_fingerprint": SELECTION_FINGERPRINT,
         "request_timeout_seconds": float(request_timeout),
         "code_execution": "disabled" if skip_code_exec else "host-guarded",
     }
@@ -101,27 +105,37 @@ def _run_main(argv: list[str]) -> int:
     )
     p.add_argument(
         "--policy",
-        choices=("strict", "vendor", "both"),
+        choices=("strict", "vendor", "both", "custom"),
         default="strict",
-        help="Inference policy to run. 'both' runs strict then vendor with separate artifacts.",
+        help="Sampling mode: strict baseline, vendor-recommended settings, both, or explicit custom settings.",
     )
     p.add_argument("--policy-file", type=Path, default=None, help="Reviewed vendor policy mapping JSON.")
     p.add_argument(
         "--seed",
         type=int,
         default=None,
-        help="Override sampling seed. Vendor default 1; omit to use the reviewed policy.",
+        help="Optional integer for repeatable sampling when the endpoint honors seeds. Vendor-recommended default is 1; some endpoints ignore seeds.",
+    )
+    p.add_argument("--temperature", type=float, default=None, help="Custom mode temperature (required).")
+    p.add_argument("--top-p", type=float, default=None, help="Custom mode nucleus-sampling cutoff.")
+    p.add_argument("--top-k", type=int, default=None, help="Custom mode top-k cutoff.")
+    p.add_argument("--min-p", type=float, default=None, help="Custom mode minimum-token probability cutoff.")
+    p.add_argument(
+        "--thinking",
+        choices=("on", "off"),
+        default=None,
+        help="Explicit reasoning/thinking toggle for any sampling mode.",
     )
     p.add_argument(
         "--limit",
         type=int,
         default=20,
-        help="Items per dataset. Default 20 (~180 items).",
+        help="Scored items per category. Default 20 (~120 total across six categories).",
     )
     p.add_argument(
         "--full",
         action="store_true",
-        help="Ignore --limit and run the entire shipped sets (740 items).",
+        help="Ignore --limit and run the entire shipped sets (884 items).",
     )
     p.add_argument(
         "--max-minutes",
@@ -169,6 +183,12 @@ def _run_main(argv: list[str]) -> int:
     except ValueError as exc:
         p.error(str(exc))
 
+    custom_values = (args.temperature, args.top_p, args.top_k, args.min_p)
+    if args.policy == "custom" and args.temperature is None:
+        p.error("--policy custom requires --temperature")
+    if args.policy != "custom" and any(value is not None for value in custom_values):
+        p.error("--temperature/--top-p/--top-k/--min-p require --policy custom")
+
     limit = None if args.full else args.limit
     requested_log = args.log
     if requested_log is None:
@@ -197,13 +217,26 @@ def _run_main(argv: list[str]) -> int:
         if args.policy == "both":
             print(f"=== {policy_name.upper()} ===", flush=True)
         try:
-            policy = resolve_policy(
-                policy_name,
-                args.model,
-                budget_overrides=budgets or None,
-                seed=args.seed,
-                policy_file=args.policy_file,
-            )
+            if policy_name == "custom":
+                policy = custom_policy(
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    top_k=args.top_k,
+                    min_p=args.min_p,
+                    thinking=args.thinking == "on",
+                    seed=args.seed,
+                    budget_overrides=budgets or None,
+                )
+            else:
+                policy = resolve_policy(
+                    policy_name,
+                    args.model,
+                    budget_overrides=budgets or None,
+                    seed=args.seed,
+                    policy_file=args.policy_file,
+                )
+            if args.thinking is not None:
+                policy = override_thinking(policy, args.thinking == "on")
         except ValueError as exc:
             p.error(str(exc))
         identity = _journal_identity(

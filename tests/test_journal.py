@@ -101,6 +101,22 @@ class TestJournal(unittest.TestCase):
             records = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(records, [{"_sixcat_run": replacement}])
 
+    def test_new_run_identity_declares_limit_is_per_category(self):
+        from sixcat.__main__ import _journal_identity
+        from sixcat.policy import strict_policy
+
+        identity = _journal_identity(
+            model="model-a",
+            base_url="http://127.0.0.1:8083/v1",
+            policy=strict_policy(),
+            limit=20,
+            request_timeout=180.0,
+            skip_code_exec=False,
+        )
+
+        self.assertEqual(identity["limit"], 20)
+        self.assertEqual(identity["limit_scope"], "per_category")
+
 
 class TestTimeBudget(unittest.TestCase):
     def test_expired_after_seconds(self):

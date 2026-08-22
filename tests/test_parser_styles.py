@@ -157,6 +157,53 @@ class TestInstructResponseStyles(unittest.TestCase):
 
 
 class TestStructuredToolResponseStyles(unittest.TestCase):
+    def test_correct_tool_name_with_wrong_arguments_fails(self):
+        from sixcat.tools import run_tools
+
+        class FakeClient:
+            def complete(self, prompt, **kwargs):
+                return {
+                    "text": "",
+                    "reasoning_content": "",
+                    "tool_calls": [{
+                        "id": "call_1", "type": "function",
+                        "function": {"name": "read_file", "arguments": '{"path":"wrong.txt"}'},
+                    }],
+                    "finish": "tool_calls",
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    "request_params": kwargs,
+                }
+
+        item = ("exact path", [("read_file", {"path": "README.md"})], "Read README.md exactly.")
+        with patch("sixcat.tools.ITEMS", [item]):
+            row = run_tools(FakeClient(), limit=1)[0]
+
+        self.assertFalse(row["ok"])
+
+    def test_exact_multi_call_sequence_and_arguments_pass(self):
+        from sixcat.tools import run_tools
+
+        class FakeClient:
+            def complete(self, prompt, **kwargs):
+                calls = [
+                    {"function": {"name": "add", "arguments": '{"a":19,"b":23}'}},
+                    {"function": {"name": "add", "arguments": {"a": 100, "b": 1}}},
+                ]
+                return {
+                    "text": "", "reasoning_content": "", "tool_calls": calls,
+                    "finish": "tool_calls", "usage": {}, "request_params": kwargs,
+                }
+
+        item = (
+            "two adds",
+            [("add", {"a": 19, "b": 23}), ("add", {"a": 100, "b": 1})],
+            "Call add twice in order.",
+        )
+        with patch("sixcat.tools.ITEMS", [item]):
+            row = run_tools(FakeClient(), limit=1)[0]
+
+        self.assertTrue(row["ok"])
+
     def test_preceding_reasoning_cannot_override_structured_call_and_full_receipt_is_retained(self):
         from sixcat.tools import run_tools
 

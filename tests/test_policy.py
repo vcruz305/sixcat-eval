@@ -137,6 +137,62 @@ class TestPolicyValue(unittest.TestCase):
             with self.subTest(field=field_name), self.assertRaisesRegex(ValueError, field_name):
                 Policy(**kwargs)
 
+    def test_custom_policy_records_exact_user_sampling_settings(self):
+        from sixcat.policy import custom_policy
+
+        policy = custom_policy(
+            temperature=0.7,
+            top_p=0.92,
+            top_k=40,
+            min_p=0.05,
+            thinking=True,
+            seed=42,
+            budget_overrides={"math": 1500},
+        )
+
+        self.assertEqual(policy.name, "custom")
+        self.assertEqual(policy.temperature, 0.7)
+        self.assertEqual(policy.top_p, 0.92)
+        self.assertEqual(policy.top_k, 40)
+        self.assertEqual(policy.min_p, 0.05)
+        self.assertTrue(policy.thinking)
+        self.assertEqual(policy.extra["seed"], 42)
+        self.assertEqual(policy.budgets["math"], 1500)
+        self.assertEqual(policy.source, "user-custom")
+
+    def test_custom_policy_without_seed_leaves_seed_unset(self):
+        from sixcat.policy import custom_policy
+
+        policy = custom_policy(temperature=0.7)
+
+        self.assertNotIn("seed", policy.extra)
+
+    def test_thinking_override_is_explicit_and_uses_reasoning_budgets(self):
+        from sixcat.policy import override_thinking, strict_policy
+
+        policy = override_thinking(strict_policy(), True)
+
+        self.assertTrue(policy.thinking)
+        self.assertEqual(policy.temperature, 0.0)
+        self.assertEqual(policy.budgets["instruct"], 6767)
+        self.assertIn("thinking=on:user", policy.source)
+
+    def test_thinking_off_override_restores_non_reasoning_budgets(self):
+        from sixcat.policy import STRICT_BUDGETS, override_thinking, resolve_policy
+
+        policy = override_thinking(resolve_policy("vendor", "Qwen3.8-27B"), False)
+
+        self.assertFalse(policy.thinking)
+        self.assertEqual(dict(policy.budgets), STRICT_BUDGETS)
+
+    def test_vendor_no_thinking_policy_uses_non_reasoning_budgets(self):
+        from sixcat.policy import STRICT_BUDGETS, resolve_policy
+
+        policy = resolve_policy("vendor", "Qwen2.5-72B-Instruct")
+
+        self.assertFalse(policy.thinking)
+        self.assertEqual(dict(policy.budgets), STRICT_BUDGETS)
+
 
 class TestPolicyResolution(unittest.TestCase):
     def _assert_invalid_policy_entry(self, field_name, value, message):
@@ -786,6 +842,72 @@ class TestPolicyAwareClient(unittest.TestCase):
 
 
 class TestPolicyCliWiring(unittest.TestCase):
+    def test_strict_cli_allows_explicit_thinking_on(self):
+        from unittest.mock import patch
+
+        from sixcat.__main__ import main
+
+        with (
+            patch("sixcat.__main__.RunJournal"),
+            patch("sixcat.__main__.Session"),
+            patch("sixcat.__main__.ChatClient") as client_type,
+            patch("sixcat.__main__.run_battery", return_value={}),
+            patch("sixcat.__main__.render_table", return_value="ok"),
+        ):
+            rc = main([
+                "--model", "reasoning-model", "--policy", "strict",
+                "--thinking", "on", "--log", "ignored.jsonl", "--no-resume",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(client_type.call_args.args[2].thinking)
+
+    def test_custom_cli_builds_exact_user_sampling_policy(self):
+        from unittest.mock import patch
+
+        from sixcat.__main__ import main
+
+        with (
+            patch("sixcat.__main__.RunJournal"),
+            patch("sixcat.__main__.Session"),
+            patch("sixcat.__main__.ChatClient") as client_type,
+            patch("sixcat.__main__.run_battery", return_value={}),
+            patch("sixcat.__main__.render_table", return_value="ok"),
+        ):
+            rc = main(
+                [
+                    "--model",
+                    "unknown-model",
+                    "--policy",
+                    "custom",
+                    "--temperature",
+                    "0.7",
+                    "--top-p",
+                    "0.92",
+                    "--top-k",
+                    "40",
+                    "--min-p",
+                    "0.05",
+                    "--thinking",
+                    "on",
+                    "--seed",
+                    "42",
+                    "--log",
+                    "ignored.jsonl",
+                    "--no-resume",
+                ]
+            )
+
+        self.assertEqual(rc, 0)
+        policy = client_type.call_args.args[2]
+        self.assertEqual(policy.name, "custom")
+        self.assertEqual(policy.temperature, 0.7)
+        self.assertEqual(policy.top_p, 0.92)
+        self.assertEqual(policy.top_k, 40)
+        self.assertEqual(policy.min_p, 0.05)
+        self.assertTrue(policy.thinking)
+        self.assertEqual(policy.extra["seed"], 42)
+
     def test_vendor_cli_resolves_policy_file_seed_and_budget_overrides(self):
         from pathlib import Path
         from unittest.mock import patch
@@ -838,13 +960,16 @@ class TestPolicyCliWiring(unittest.TestCase):
             identity,
             {
                 "result_schema": "sixcat-v2",
-                "parser": "v3",
+                "parser": "v4",
                 "model": "ornith-nomtp",
                 "base_url": "http://127.0.0.1:8085/v1",
                 "policy": policy.name,
                 "policy_fingerprint": policy.fingerprint,
                 "budgets": dict(policy.budgets),
                 "limit": 20,
+                "limit_scope": "per_category",
+                "selection_profile": "challenge-v1",
+                "selection_fingerprint": identity["selection_fingerprint"],
                 "request_timeout_seconds": 900.0,
                 "code_execution": "disabled",
             },
@@ -1058,7 +1183,7 @@ class TestPolicyRunIntegration(unittest.TestCase):
         self.assertEqual(result["policy_probe"], "ok")
         self.assertEqual(result["policy_fingerprint"], policy.fingerprint)
         self.assertEqual(result["budgets"]["knowledge"], 600)
-        self.assertEqual(result["parser"], "v3")
+        self.assertEqual(result["parser"], "v4")
         self.assertEqual(result["code_execution"], "host-guarded")
         self.assertNotIn("code-exec-disabled", result["overall_flags"])
         self.assertEqual(result["overall"], {"policy": "strict", "score": 100.0})

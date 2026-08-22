@@ -1,3 +1,99 @@
+# Sixcat 0.4.0 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.2.0
+
+**Status:** final release
+
+Sixcat 0.4.0 makes the short battery materially harder, fixes per-category scope,
+and lets Hermes evaluate the raw model powering the current agent profile rather
+than accidentally benchmarking the agent facade. It includes the unreleased 0.3.0
+work; there is intentionally no separate v0.3.0 tag.
+
+## Scoring and challenge integrity
+
+- Limited runs use frozen `challenge-v1` selection. Quick starts with the hardest
+  few tasks and Standard uses a hard/diverse subset instead of easy file prefixes.
+- Knowledge, Math, and Truth difficulty comes from cross-model Sixcat receipts.
+  Instruction uses a frozen constraint-density ranking over the shipped IFEval set.
+- Code uses an independent 49-model HumanEval difficulty ranking. Quick begins with
+  HumanEval/145, /132, and /130; Standard uses 20 hard tasks; Full executes all
+  164 HumanEval tasks.
+- Tools now grade exact arguments, call count/order, multi-call requests,
+  distractors, and abstention. Historical first-tool-name-only grading is retired.
+- Parser/grader identity advances to `v4`. Selection profile and fingerprint are
+  persisted and enforced across resume and comparison boundaries.
+- Full now contains 884 rows. Full mode preserves every shipped source row while
+  Quick and Standard use challenge-first ordering.
+
+## Correct run scope and sampling controls
+
+- `--limit` is a per-category cap. Standard `--limit 20` targets approximately
+  120 rows total; Knowledge splits those 20 slots across MMLU, ARC, HellaSwag,
+  and WinoGrande instead of expanding to 80 rows.
+- Result and journal identity records `limit_scope: per_category` so legacy
+  per-dataset journals cannot resume silently under the corrected contract.
+- `--policy custom` accepts exact temperature, top-p, top-k, min-p, and seed values.
+- Thinking On/Off is a separate choice for every sampling mode. Thinking On is
+  recommended for reasoning-capable endpoints and raises category token budgets.
+  The pre-run probe still fails closed if the endpoint does not honor the choice.
+
+## Hermes current-model evaluation
+
+- `/sixcat-eval` asks first whether to evaluate the model powering the current
+  Hermes session, another Hermes profile, or an alternate OpenAI-compatible endpoint.
+- Current/profile mode resolves the profile's live model and provider and exposes a
+  short-lived loopback proxy to the raw provider model. It does not score the Hermes
+  agent facade, system prompt, memory, tools, or agent loop.
+- The raw proxy pins model/provider identity, rejects silent fallback, never prints
+  credentials, and closes in a `finally` block. The skill never kills, rebinds, or
+  swaps a user's model server.
+- Pre-run questions now carry distinct emoji, plain-language trade-offs, and a
+  preview of endpoint, model identity, policy, seed, budgets, thinking, scope, and
+  code-execution mode before launch.
+
+## Compatibility and migration
+
+- Parser-v2 and parser-v3 artifacts remain readable but are not directly comparable
+  to parser-v4 challenge runs.
+- Existing journals from before 0.4.0 require a new log or `--no-resume` when their
+  parser, limit scope, selection fingerprint, or policy identity differs.
+- `--full --max-minutes 0` is the explicit uncapped complete 884-row battery.
+- HumanEval remains host-guarded by default. The guard is practical containment,
+  not a security sandbox; use `--skip-code-exec` for actively malicious endpoints.
+
+## Verification receipts
+
+- `python -m pytest -q`: **210 passed, 164 subtests passed**.
+- All **164/164** official HumanEval canonical solutions passed the guarded executor.
+- Main CLI and the Hermes runner/preflight/status helpers compile.
+- The final wheel contains `sixcat/selection.py`, model policy data, and all runtime
+  datasets. Wheel and sdist publication hashes are attached to the GitHub Release.
+
+---
+
+# Sixcat 0.3.0 Release Notes
+
+**Status:** included in 0.4.0; not tagged separately
+
+## 0.3.0 highlights
+
+- `--limit` is now a **per-category** cap. Standard `--limit 20` targets about
+  120 scored rows, and Knowledge fairly splits its 20 slots across MMLU, ARC,
+  HellaSwag, and WinoGrande instead of expanding to 80 rows.
+- Run identity and final JSON now record `limit_scope: per_category`, preventing
+  old per-dataset journals from being silently resumed under the new contract.
+- `--policy custom` accepts explicit `--temperature` plus optional `--top-p`,
+  `--top-k`, `--min-p`, `--thinking`, and `--seed` values.
+- `/sixcat-eval` now uses emoji-labelled questions with plain-English summaries
+  for target choice, sampling controls, seed, run size, and HumanEval safety.
+- User-facing language calls reviewed mode **vendor-recommended
+  temperature/settings**; unknown or stealth models recommend Custom sampling
+  instead of presenting a strict fallback as a vendor recommendation.
+
+---
+
 # Sixcat 0.2.0 Release Notes
 
 **Release date:** 2026-08-21

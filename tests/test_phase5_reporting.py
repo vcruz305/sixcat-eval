@@ -34,7 +34,7 @@ class TestCurrentResultSchema(unittest.TestCase):
                 stack.enter_context(patch(f"sixcat.run.run_{category}", return_value=rows))
             result = run_battery(client, limit=1, skip_code_exec=False)
 
-        self.assertEqual(result["parser"], "v3")
+        self.assertEqual(result["parser"], "v4")
         self.assertEqual(result["result_schema"], "sixcat-v2")
         self.assertEqual(result["code_execution"], "host-guarded")
         for key in ("policy", "policy_source", "policy_probe", "policy_fingerprint", "budgets"):
