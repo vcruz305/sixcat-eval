@@ -1,11 +1,32 @@
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/78f2fd46-8669-4176-9282-635f83582c6d" />
+<img width="1774" height="887" alt="Sixcat Eval 0.2.0 dashboard with six category scores and terminal receipts" src="assets/sixcat-readme-header-v0.2.0.png" />
 
 # sixcat-eval
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.2.0 release candidate:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for policy modes,
+**0.2.0 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for policy modes,
 all 29 reviewed model families, scorer/parser v3, speed receipts, comparison, and migration notes.
+
+## Top features
+
+- **A useful daily run with a 30-minute cap.** Six community categories roll into one
+  unweighted overall; every completed item is journaled so interrupted runs resume instead
+  of starting over.
+- **Scoring that fails closed.** Scorer/parser v3 explicitly checks all 23 shipped IFEval
+  constraints, maps ARC labels to the choices shown to the model, ignores thinking as an
+  answer, and never awards blank or unsupported instructions a free pass.
+- **HumanEval by default, without Docker overhead.** Code runs in a short-lived guarded host
+  subprocess with the official checker, an 8-second cap, and a harness-owned success receipt.
+- **Reviewed model settings instead of guesses.** Run `strict`, cited `vendor`, or `both`
+  across 29 reviewed model families; unknown models warn and fall back to strict.
+- **Resume safely; compare without false equivalence.** Resume rejects changes in model,
+  endpoint, policy fingerprint, parser, budgets, limit, request timeout, or code mode.
+  Compare blocks policy/parser/scope/code-mode mismatches and timed-out runs unless an
+  explicit override requests a descriptive-only delta.
+- **Quality and speed receipts together.** Every artifact records truncation, loop failures,
+  parse confidence, wall-clock tok/s, and provider prefill/decode rates when the server
+  actually supplies them. Works with `llama-server`, vLLM, Ollama, and other
+  OpenAI-compatible servers.
 
 Point it at any OpenAI-compatible server (`llama-server`, vLLM, Ollama). It prints:
 
@@ -13,18 +34,20 @@ Point it at any OpenAI-compatible server (`llama-server`, vLLM, Ollama). It prin
 model: example-model
 url:   http://127.0.0.1:8085/v1
 policy: vendor (abc123def456)
+source: illustrative README fixture
 code execution: host-guarded
 
 category        score     n  trunc  loops  high   low   n/a  miss      pp      tg     tps
 -----------------------------------------------------------------------------------------
-knowledge       62.5    12      0      0    12     0     0     0     n/a     n/a     n/a
-math            33.3     3      0      0     3     0     0     0     n/a     n/a     n/a
-truth           66.7     3      0      0     3     0     0     0     n/a     n/a     n/a
-instruct        33.3     3      0      0     0     0     3     0     n/a     n/a     n/a
-code             0.0     3      0      0     0     0     3     0     n/a     n/a     n/a
-tools           66.7     3      0      0     0     0     3     0     n/a     n/a     n/a
+knowledge       75.0    12      0      0     9     3     0     0  1260.4    43.8    38.6
+math            83.3     6      0      0     5     1     0     0  1184.7    40.9    35.2
+truth           60.0     5      0      0     4     1     0     0  1218.5    42.3    36.8
+instruct        87.5     8      0      0     0     0     8     0  1096.2    39.6    34.1
+code            50.0     6      0      0     0     0     6     0   967.8    36.4    31.7
+tools          100.0     4      0      0     0     0     4     0  1315.9    45.1    40.6
 -----------------------------------------------------------------------------------------
-overall[vendor]       43.8
+overall[vendor]       76.0
+speed: 2184 ctok / 60.0s  suite_tps 36.4  mean 36.2
 ```
 
 **Overall is the unweighted mean of the category scores that actually ran.** Each category is `100 * n_correct / n`. Empty category → omitted from the mean, not a zero.
@@ -49,15 +72,16 @@ If you want the academic 740, pass `--full --max-minutes 0`. That is opt-in. The
 
 ## What's in here
 
-1. **[Why](#why)** — 30 minutes, six community subjects, one overall.
-2. **[Score contract](#score-contract)** — six buckets, one average.
-3. **[Categories](#categories)** — what each number is.
-4. **[Quick start](#quick-start)** — one command against `:8085`.
-5. **[Hermes workflow](#hermes-workflow)** — conversational detection, policy preview, and live status.
-6. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
-7. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
+1. **[Top features](#top-features)** — the value and safety contract at a glance.
+2. **[Why](#why)** — 30 minutes, six community subjects, one overall.
+3. **[Score contract](#score-contract)** — six buckets, one average.
+4. **[Categories](#categories)** — what each number is.
+5. **[Quick start](#quick-start)** — one command against `:8085`.
+6. **[Hermes workflow](#hermes-workflow)** — conversational detection, policy preview, and live status.
+7. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
+8. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
 
-**Jump to:** [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Categories](#categories) · [Method](#method) · [0.2.0 notes](RELEASE_NOTES.md)
+**Jump to:** [Top features](#top-features) · [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Categories](#categories) · [Method](#method) · [0.2.0 notes](RELEASE_NOTES.md)
 
 ## Score contract
 
@@ -151,8 +175,11 @@ The comparison command refuses to compare a `--limit` smoke against a full run b
 ## Method
 
 - One stream. One model id. Same prompt template every run.
-- Multiple choice: “Reply with only the letter.” Parser v2 prefers explicit answer formats and records fallback confidence.
-- GSM8K: “End with `#### <number>`.” Parser v2 prefers `####`, boxed, or explicit final answers before its low-confidence fallback.
+- Multiple choice: “Reply with only the letter.” Scorer/parser v3 keeps the format-first
+  extraction introduced in v2, records fallback confidence, and maps ARC source labels to
+  the displayed choice letters.
+- GSM8K: “End with `#### <number>`.” Scorer/parser v3 prefers `####`, boxed, or explicit
+  final answers before its low-confidence fallback.
 - Dedicated or inline thinking is never parsed as the answer.
 - Tools: OpenAI `tools=` on `/v1/chat/completions`.
 
