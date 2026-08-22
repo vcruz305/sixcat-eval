@@ -1,0 +1,4 @@
+include RELEASE_NOTES.md
+recursive-include .hermes/skills/sixcat-eval *.md *.py
+recursive-include tests *.py
+recursive-include tools *.py

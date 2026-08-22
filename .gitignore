@@ -7,3 +7,6 @@ data/*.src
 results/
 .pytest_cache/
 *.egg-info/
+build/
+dist/
+unsloth_compiled_cache/

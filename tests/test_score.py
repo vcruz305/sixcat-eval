@@ -47,6 +47,52 @@ class TestScore(unittest.TestCase):
         self.assertEqual(extract_gsm_number("... #### 29"), "29")
         self.assertEqual(extract_gsm_number("The total is 1,240 dollars."), "1240")
 
+    def test_arc_gold_resolves_dataset_labels_to_presented_choice_letters(self):
+        from sixcat.run import arc_answer_letter
+
+        self.assertEqual(arc_answer_letter({"labels": ["1", "2", "3", "4"], "answer": "3"}), "C")
+        self.assertEqual(arc_answer_letter({"labels": ["A", "B", "C", "D"], "answer": "B"}), "B")
+        self.assertEqual(arc_answer_letter({"labels": ["A", "B", "C", "D", "E"], "answer": "E"}), "E")
+        with self.assertRaises(ValueError):
+            arc_answer_letter({"labels": ["A", "B"], "answer": "C"})
+
+    def test_run_knowledge_scores_numeric_arc_labels_end_to_end(self):
+        from unittest.mock import patch
+
+        from sixcat.run import run_knowledge
+
+        item = {
+            "question": "pick third",
+            "texts": ["one", "two", "three", "four"],
+            "labels": ["1", "2", "3", "4"],
+            "answer": "3",
+        }
+
+        class Policy:
+            budgets = {"knowledge": 32}
+
+        class Client:
+            policy = Policy()
+
+            def complete(self, prompt, **kwargs):
+                return {
+                    "text": "C",
+                    "finish": "stop",
+                    "usage": {"completion_tokens": 1, "prompt_tokens": 8},
+                    "request_params": kwargs,
+                }
+
+        def fake_data(name):
+            return [item] if name == "tiny_arc.jsonl" else []
+
+        with patch("sixcat.run.read_jsonl", side_effect=fake_data):
+            rows = run_knowledge(Client(), limit=None)
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["pred"], "C")
+        self.assertEqual(rows[0]["gold"], "C")
+
 
 if __name__ == "__main__":
     unittest.main()

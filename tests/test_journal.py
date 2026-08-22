@@ -8,6 +8,18 @@ from sixcat.journal import RunJournal, TimeBudget
 
 
 class TestJournal(unittest.TestCase):
+    IDENTITY = {
+        "result_schema": "sixcat-v2",
+        "parser": "v2",
+        "model": "model-a",
+        "base_url": "http://127.0.0.1:8083/v1",
+        "policy": "vendor",
+        "policy_fingerprint": "abc123def456",
+        "budgets": {"knowledge": 1597, "math": 2048},
+        "limit": 20,
+        "request_timeout_seconds": 180.0,
+    }
+
     def test_append_and_reload_skips_done_keys(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "run.jsonl"
@@ -34,6 +46,60 @@ class TestJournal(unittest.TestCase):
                 self.assertEqual(j.done_keys(), {("code", "x")})
             finally:
                 j.close()
+
+    def test_same_run_identity_resumes_and_header_is_not_a_scored_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "run.jsonl"
+            with RunJournal(p, resume=False, identity=self.IDENTITY) as journal:
+                journal.append({"cat": "truth", "key": "tqa:0", "ok": True})
+
+            records = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(records[0], {"_sixcat_run": self.IDENTITY})
+            self.assertEqual(len(records), 2)
+
+            with RunJournal(p, resume=True, identity=self.IDENTITY) as resumed:
+                self.assertEqual(resumed.identity, self.IDENTITY)
+                self.assertEqual(resumed.done_keys(), {("truth", "tqa:0")})
+                self.assertEqual(len(resumed.rows_for("truth")), 1)
+
+    def test_resume_rejects_every_identity_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "run.jsonl"
+            with RunJournal(p, resume=False, identity=self.IDENTITY):
+                pass
+
+            mismatches = {
+                "model": "model-b",
+                "base_url": "http://127.0.0.1:8000/v1",
+                "policy_fingerprint": "different1234",
+                "parser": "v3",
+                "budgets": {"knowledge": 1, "math": 2},
+                "limit": None,
+                "request_timeout_seconds": 900.0,
+            }
+            for field, value in mismatches.items():
+                with self.subTest(field=field), self.assertRaisesRegex(ValueError, "run identity mismatch"):
+                    RunJournal(p, resume=True, identity={**self.IDENTITY, field: value})
+
+    def test_resume_rejects_legacy_rows_without_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "run.jsonl"
+            p.write_text('{"cat":"math","key":"gsm:0","ok":true}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "missing run identity"):
+                RunJournal(p, resume=True, identity=self.IDENTITY)
+
+    def test_no_resume_replaces_old_identity_and_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "run.jsonl"
+            with RunJournal(p, resume=False, identity=self.IDENTITY) as journal:
+                journal.append({"cat": "math", "key": "gsm:0", "ok": True})
+
+            replacement = {**self.IDENTITY, "model": "model-b"}
+            with RunJournal(p, resume=False, identity=replacement) as journal:
+                self.assertEqual(journal.done_keys(), set())
+
+            records = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(records, [{"_sixcat_run": replacement}])
 
 
 class TestTimeBudget(unittest.TestCase):

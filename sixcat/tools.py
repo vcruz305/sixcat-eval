@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import copy
 from typing import Any
 
 TOOLS = [
@@ -102,9 +102,10 @@ def _first_name(tool_calls: list[Any]) -> str | None:
     return None
 
 
-def run_tools(client, limit: int | None, session=None) -> list[dict]:
+def run_tools(client, limit: int | None, session=None, max_tokens: int | None = None) -> list[dict]:
     from .journal import emit, gate
 
+    mt = 256 if max_tokens is None else max_tokens
     items = ITEMS if limit is None else ITEMS[:limit]
     rows = []
     for name, want, prompt in items:
@@ -115,11 +116,33 @@ def run_tools(client, limit: int | None, session=None) -> list[dict]:
         if isinstance(g, dict):
             rows.append(g)
             continue
-        out = client.complete(prompt, max_tokens=128, tools=TOOLS)
+        out = client.complete(prompt, max_tokens=mt, tools=TOOLS)
         called = _first_name(out["tool_calls"])
         if want is None:
             ok = called is None and bool((out["text"] or "").strip())
         else:
             ok = called == want
-        rows.append(emit(session, "tools", key, {"ok": ok, "pred": called or (out["text"] or "")[:80]}))
+        usage = out.get("usage") or {}
+        rows.append(
+            emit(
+                session,
+                "tools",
+                key,
+                {
+                    "ok": ok,
+                    "pred": called or (out["text"] or "")[:80],
+                    "gold": want,
+                    "raw_text": out["text"] or "",
+                    "reasoning_content": out.get("reasoning_content") or "",
+                    "tool_calls": copy.deepcopy(out["tool_calls"]),
+                    "parse_confidence": "not_applicable",
+                    "prompt": prompt,
+                    "grader": {"name": "structured-tool-call", "item": name},
+                    "finish": out.get("finish"),
+                    "ctok": usage.get("completion_tokens"),
+                    "ptok": usage.get("prompt_tokens"),
+                    "request_params": out.get("request_params"),
+                },
+            )
+        )
     return rows
