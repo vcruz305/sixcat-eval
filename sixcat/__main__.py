@@ -20,7 +20,7 @@ from .report import (
     load_result,
     render_both_table,
 )
-from .run import CATEGORIES, render_table, run_battery
+from .run import CATEGORIES, render_table, retry_plan_from_result, run_battery
 from .selection import SELECTION_FINGERPRINT, SELECTION_PROFILE
 
 
@@ -339,10 +339,40 @@ def _compare_main(argv: list[str]) -> int:
     return 0
 
 
+def _retry_plan_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sixcat retry-plan",
+        description="Print merge argv for an existing Sixcat result JSON.",
+    )
+    parser.add_argument("result", type=Path)
+    parser.add_argument("--retry", choices=("failed", "remaining", "incomplete"), default="failed")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        document = json.loads(args.result.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError("result must be a JSON object")
+        plan = retry_plan_from_result(document, retry=args.retry, result_path=str(args.result))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(plan, indent=2, ensure_ascii=False))
+    else:
+        print("model", plan["model"])
+        print("retry", plan["retry"])
+        print("remaining", (plan["continuation"] or {}).get("remaining"))
+        print("failed", (plan["continuation"] or {}).get("failed"))
+        print("argv", " ".join(plan["argv"]))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "compare":
         return _compare_main(args[1:])
+    if args and args[0] == "retry-plan":
+        return _retry_plan_main(args[1:])
     return _run_main(args)
 
 

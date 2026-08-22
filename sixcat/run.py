@@ -80,6 +80,53 @@ def continuation_offer(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def retry_plan_from_result(result: dict[str, Any], *, retry: str, result_path: str | None = None) -> dict[str, Any]:
+    """Build merge argv from a saved result so a Hermes session can retry without guessing."""
+    if retry not in {"failed", "remaining", "incomplete"}:
+        raise ValueError(f"unknown retry mode {retry!r}")
+    offer = continuation_offer(result)
+    policy = result.get("policy") if isinstance(result.get("policy"), dict) else {}
+    argv: list[str] = ["--policy", str(policy.get("name") or "custom")]
+    if policy.get("name") == "custom":
+        if policy.get("temperature") is None:
+            raise ValueError("custom result is missing temperature")
+        argv.extend(["--temperature", str(policy["temperature"])])
+        if policy.get("top_p") is not None:
+            argv.extend(["--top-p", str(policy["top_p"])])
+        if policy.get("top_k") is not None:
+            argv.extend(["--top-k", str(policy["top_k"])])
+        if policy.get("min_p") is not None:
+            argv.extend(["--min-p", str(policy["min_p"])])
+    if policy.get("thinking") is True:
+        argv.extend(["--thinking", "on"])
+    elif policy.get("thinking") is False:
+        argv.extend(["--thinking", "off"])
+    extra = policy.get("extra") if isinstance(policy.get("extra"), dict) else {}
+    if extra.get("seed") is not None:
+        argv.extend(["--seed", str(extra["seed"])])
+    if result.get("limit") is None:
+        argv.extend(["--full", "--max-minutes", "0"])
+    else:
+        argv.extend(["--limit", str(result["limit"]), "--max-minutes", "30"])
+    timeout = result.get("request_timeout_seconds")
+    if timeout:
+        argv.extend(["--request-timeout", str(timeout)])
+    if result.get("code_execution") == "disabled":
+        argv.append("--skip-code-exec")
+    argv.extend(["--retry", retry])
+    log_path = result.get("log")
+    if log_path:
+        argv.extend(["--log", str(log_path)])
+    if result_path:
+        argv.extend(["--out", str(result_path)])
+    return {
+        "model": result.get("model"),
+        "retry": retry,
+        "argv": argv,
+        "continuation": offer,
+    }
+
+
 def split_category_limit(limit: int | None, dataset_count: int) -> list[int | None]:
     """Split one category cap fairly across its component datasets."""
     if dataset_count <= 0:

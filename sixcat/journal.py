@@ -45,15 +45,12 @@ class RunJournal:
                         "use --no-resume or a fresh log"
                     )
                 if self._loaded_identity is not None and self._loaded_identity != self.identity:
-                    changed = sorted(
-                        key
-                        for key in set(self._loaded_identity) | set(self.identity)
-                        if self._loaded_identity.get(key) != self.identity.get(key)
-                    )
-                    raise ValueError(
-                        f"cannot resume {self.path}: run identity mismatch in {', '.join(changed)}; "
-                        "use --no-resume or a matching log"
-                    )
+                    changed = self.identity_changes(self._loaded_identity, self.identity)
+                    if changed:
+                        raise ValueError(
+                            f"cannot resume {self.path}: run identity mismatch in {', '.join(changed)}; "
+                            "use --no-resume or a matching log"
+                        )
             elif self._loaded_identity is not None:
                 self.identity = copy.deepcopy(self._loaded_identity)
             self._fh = self.path.open("a", encoding="utf-8")
@@ -74,6 +71,35 @@ class RunJournal:
             return json.loads(json.dumps(identity, sort_keys=True, ensure_ascii=False))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"run identity must be JSON serializable: {exc}") from exc
+
+    @staticmethod
+    def _is_loopback_base_url(value: Any) -> bool:
+        if not isinstance(value, str) or not value.strip():
+            return False
+        lowered = value.casefold()
+        return "://127.0.0.1" in lowered or "://localhost" in lowered
+
+    @classmethod
+    def identity_changes(
+        cls,
+        loaded: dict[str, Any],
+        incoming: dict[str, Any],
+        *,
+        ignore: set[str] | frozenset[str] = frozenset(),
+    ) -> list[str]:
+        changed = []
+        for key in sorted(set(loaded) | set(incoming)):
+            if key in ignore:
+                continue
+            if (
+                key == "base_url"
+                and cls._is_loopback_base_url(loaded.get(key))
+                and cls._is_loopback_base_url(incoming.get(key))
+            ):
+                continue
+            if loaded.get(key) != incoming.get(key):
+                changed.append(key)
+        return changed
 
     def _write_identity_header(self) -> None:
         self._fh.write(json.dumps({self.HEADER_KEY: self.identity}, ensure_ascii=False) + "\n")

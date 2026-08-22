@@ -70,7 +70,7 @@ class TestJournal(unittest.TestCase):
 
             mismatches = {
                 "model": "model-b",
-                "base_url": "http://127.0.0.1:8000/v1",
+                "base_url": "https://api.example.test/v1",
                 "policy_fingerprint": "different1234",
                 "parser": "v3",
                 "budgets": {"knowledge": 1, "math": 2},
@@ -80,6 +80,15 @@ class TestJournal(unittest.TestCase):
             for field, value in mismatches.items():
                 with self.subTest(field=field), self.assertRaisesRegex(ValueError, "run identity mismatch"):
                     RunJournal(p, resume=True, identity={**self.IDENTITY, field: value})
+
+    def test_loopback_base_url_port_change_does_not_block_resume(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "run.jsonl"
+            with RunJournal(p, resume=False, identity=self.IDENTITY) as journal:
+                journal.append({"cat": "math", "key": "gsm:0", "ok": True})
+            moved = {**self.IDENTITY, "base_url": "http://127.0.0.1:64675/v1"}
+            with RunJournal(p, resume=True, identity=moved) as resumed:
+                self.assertEqual(resumed.done_keys(), {("math", "gsm:0")})
 
     def test_resume_rejects_legacy_rows_without_identity(self):
         with tempfile.TemporaryDirectory() as td:

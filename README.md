@@ -4,9 +4,9 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.2 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for merged
-`--retry` continuations after a 30-minute TIMEUP, plus GLM-5.x vendor settings
-and hidden-thinking probe behavior.
+**0.4.3 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for the Hermes
+skill GitHub release check, `sixcat retry-plan` for existing receipts, and
+loopback-port resume. 0.4.2 added merged `--retry` after TIMEUP.
 
 ## Top features
 

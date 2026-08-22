@@ -145,6 +145,41 @@ class TestRetryMerge(unittest.TestCase):
         self.assertTrue(offer["can_continue_remaining"])
         self.assertTrue(offer["can_retry_failed"])
 
+    def test_retry_plan_rebuilds_custom_argv(self):
+        from sixcat.run import retry_plan_from_result
+
+        plan = retry_plan_from_result(
+            {
+                "model": "z-ai/glm-5.3",
+                "limit": 20,
+                "request_timeout_seconds": 600.0,
+                "code_execution": "host-guarded",
+                "log": "results/hermes/run.jsonl",
+                "timed_out": True,
+                "n": {"knowledge": 20, "math": 20, "truth": 20, "instruct": 10, "code": 0, "tools": 0},
+                "policy": {
+                    "name": "custom",
+                    "temperature": 1.0,
+                    "top_p": 0.95,
+                    "top_k": None,
+                    "min_p": None,
+                    "thinking": True,
+                    "extra": {},
+                },
+                "items": {"knowledge": [{"cat": "knowledge", "key": "mmlu:18", "ok": False}]},
+            },
+            retry="failed",
+            result_path="results/hermes/run.json",
+        )
+        argv = plan["argv"]
+        self.assertEqual(plan["model"], "z-ai/glm-5.3")
+        self.assertIn("--retry", argv)
+        self.assertIn("failed", argv)
+        self.assertIn("--temperature", argv)
+        self.assertIn("--thinking", argv)
+        self.assertIn("600.0", argv)
+        self.assertNotIn("--no-resume", argv)
+
     def test_cli_rejects_retry_with_no_resume(self):
         from sixcat.__main__ import main
 

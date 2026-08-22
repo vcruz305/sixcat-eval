@@ -63,6 +63,11 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "Hidden thinking is still thinking on",
         "No full rerun after TIMEUP",
         "--retry remaining",
+        "Existing-receipt retry",
+        "retry-plan",
+        "Check for a newer Sixcat release",
+        "check_release.py",
+        "Update to latest release",
     ):
         assert required.casefold() in body.casefold()
     assert "C:/Users/" not in content

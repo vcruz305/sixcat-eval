@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.2
+version: 0.4.3
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -24,6 +24,8 @@ saved receipts.
 - The user asks Hermes to test, benchmark, compare, or score a model with Sixcat.
 - The user invokes `/sixcat-eval` inside this repository.
 - The user asks for live status from an existing Sixcat JSONL journal.
+- The user asks to retry failed or remaining items from an existing Sixcat receipt
+  against the current Hermes session model.
 
 Do not use this skill to launch, kill, swap, download, or quantize a model.
 Hermes-runtime mode may create a short-lived loopback proxy owned by the tracked
@@ -55,8 +57,53 @@ actual model server. If no target is reachable, report that prerequisite.
 - New run: use `--no-resume` and a fresh artifact basename.
 - Live status: summarize the JSONL with the bundled status helper.
 - Completion: require a final JSON result plus a zero process exit code.
+- Release check: `scripts/check_release.py --json` before the first question.
 
 ## Procedure
+
+### 0. Check for a newer Sixcat release
+
+Before any target, retry, or sampling question, run:
+
+```text
+terminal(
+  command='python "${HERMES_SKILL_DIR}/scripts/check_release.py" --json',
+  workdir='<project-root>'
+)
+```
+
+- If `status=skipped`, continue. Do not block the skill on a network failure.
+- If `comparison=current` or `newer_than_release`, continue immediately to the
+  next procedure step. Do not narrate a no-op check.
+- If `update_available` is true, immediately ask one option-only `clarify`
+  before any other Sixcat question:
+
+  - **⬇️ Update to latest release (recommended)** — `git fetch origin --tags`,
+    `git checkout <latest_tag>`, then `python -m pip install -e .`. Re-read this
+    skill after the checkout. Do not force the update if the worktree is dirty;
+    report the dirty files and stop.
+  - **➡️ Continue with this checkout** — use the local commit as-is.
+
+Do not start the target or retry questionnaire until that choice is answered.
+
+### Existing-receipt retry (short path)
+
+If the user already named an existing result/journal and asked to retry failed,
+remaining, or incomplete items, **do not** start the new-run target/sampling
+questionnaire. Do not use `--no-resume`.
+
+1. Immediately confirm only what is still missing, with options: **🔁 Retry
+   failed only**, **▶️ Continue remaining only**, **🧩 Retry failed and remaining**.
+2. Default target is the **current Hermes session model**. Inspect it only after
+   the retry mode is known.
+3. Run `python -m sixcat retry-plan <result.json> --retry <mode> --json` from the
+   project root. That prints the exact merge argv (policy, temperature, thinking,
+   limit, `--request-timeout`, `--log`, `--out`).
+4. The live Hermes model/provider must match `plan.model`. If they differ, refuse
+   to merge; a different model is a new run, not a continuation.
+5. Launch through `hermes_runner.py` with those argv and **no** `--no-resume`.
+   Loopback proxy ports in the old journal are not an identity mismatch.
+6. Report the rewritten JSON as one merged receipt.
 
 ### 1. Ask which target to evaluate
 
@@ -405,4 +452,6 @@ The skill is working when:
 - the final model identity matches preflight;
 - the result JSON is self-auditing and all warnings are surfaced;
 - a timed-out or incomplete run asked to merge remaining/failed items instead of
-  suggesting a full rerun.
+  suggesting a full rerun;
+- a newer GitHub release was offered as an option-only update before any other
+  Sixcat question.

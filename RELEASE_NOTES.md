@@ -1,3 +1,37 @@
+# Sixcat 0.4.3 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.2
+
+**Status:** final release
+
+Sixcat 0.4.3 keeps Hermes sessions on the latest checkout and lets an existing
+receipt rebuild its own merge command without guessing sampling flags.
+
+## Hermes skill release check
+
+- `/sixcat-eval` runs `scripts/check_release.py` against
+  `vcruz305/sixcat-eval` before any target, retry, or sampling question.
+- A newer GitHub release is an option-only update: fetch tags, check out the
+  release tag, then `pip install -e .`. A dirty worktree is reported and not
+  overwritten.
+- Network failures fail open. A current or newer-than-release checkout does not
+  add chatter.
+
+## Existing-receipt retry plan
+
+- `python -m sixcat retry-plan <result.json> --retry failed|remaining|incomplete`
+  reprints the merge argv from the saved policy, timeout, log, and out path.
+- Hermes-runtime loopback proxy port changes are not a journal identity
+  mismatch, so a later session can merge into the same receipt.
+
+## Verification receipts
+
+- `python -m pytest -q`: **227 passed, 169 subtests passed**.
+
+---
+
 # Sixcat 0.4.2 Release Notes
 
 **Release date:** 2026-08-22
