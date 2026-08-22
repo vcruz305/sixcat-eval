@@ -181,6 +181,7 @@ def build_call_spec(payload: dict[str, Any], target: HermesRuntimeTarget) -> dic
         "presence_penalty",
         "frequency_penalty",
         "stop",
+        "reasoning_effort",
     ):
         if key in payload and payload[key] is not None:
             extra_body[key] = payload[key]

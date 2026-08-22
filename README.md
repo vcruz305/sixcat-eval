@@ -4,8 +4,9 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.0 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for policy modes,
-all 29 reviewed model families, scorer/parser v4, speed receipts, comparison, and migration notes.
+**0.4.1 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for GLM-5.x vendor
+settings, hidden-thinking probe behavior, the option-only Hermes follow-up flow,
+scorer/parser v4, and migration notes.
 
 ## Top features
 
@@ -23,7 +24,7 @@ all 29 reviewed model families, scorer/parser v4, speed receipts, comparison, an
 - **HumanEval by default, without Docker overhead.** Code runs in a short-lived guarded host
   subprocess with the official checker, an 8-second cap, and a harness-owned success receipt.
 - **Reviewed model settings instead of guesses.** Run `strict`, cited `vendor`, or `both`
-  across 29 reviewed model families; unknown models warn and fall back to strict.
+  across 30 reviewed model families; unknown models warn and fall back to strict.
 - **Resume safely; compare without false equivalence.** Resume rejects changes in model,
   endpoint, policy fingerprint, parser, budgets, limit, request timeout, or code mode.
   Compare blocks policy/parser/scope/code-mode mismatches and timed-out runs unless an
@@ -87,7 +88,7 @@ If you want all 884 shipped rows, pass `--full --max-minutes 0`. That is opt-in.
 8. **[Crash resume](#quick-start)** — live JSONL log + `--max-minutes`.
 9. **[What we refuse to mix in](#what-we-refuse-to-mix-in)**
 
-**Jump to:** [Top features](#top-features) · [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Question preview](#question-preview) · [Categories](#categories) · [Method](#method) · [0.4.0 notes](RELEASE_NOTES.md)
+**Jump to:** [Top features](#top-features) · [Why](#why) · [Install](#quick-start) · [Hermes](#hermes-workflow) · [Question preview](#question-preview) · [Categories](#categories) · [Method](#method) · [0.4.1 notes](RELEASE_NOTES.md)
 
 ## Score contract
 
@@ -138,7 +139,7 @@ Quick takes the hardest few, Standard takes a hard/diverse 20, and Full preserve
 the complete source corpus. The selection profile and fingerprint are saved in
 every journal/result, so old easy-prefix runs cannot resume or compare silently.
 
-`--policy strict` is the deterministic temperature baseline: temperature 0; thinking defaults off but is an explicit independent `--thinking on|off` choice. `--policy vendor` is the internal CLI name for **vendor-recommended temperature/settings** from a reviewed model-card mapping, including seed 1 for easier repeat runs. Unknown names fall back to strict. `--policy custom` lets you supply exact settings such as `--temperature 0.7 --top-p 0.95`; temperature is required, while top-p/top-k/min-p/seed are optional. Thinking On is recommended for reasoning-capable endpoints and automatically raises token budgets; the pre-run probe fails closed if the endpoint cannot expose the requested trace.
+`--policy strict` is the deterministic temperature baseline: temperature 0; thinking defaults off but is an explicit independent `--thinking on|off` choice. `--policy vendor` is the internal CLI name for **vendor-recommended temperature/settings** from a reviewed model-card mapping, including seed 1 for easier repeat runs. Unknown names fall back to strict. `--policy custom` lets you supply exact settings such as `--temperature 0.7 --top-p 0.95`; temperature is required, while top-p/top-k/min-p/seed are optional. Thinking On is recommended for reasoning-capable endpoints and automatically raises token budgets. The pre-run probe auto-detects visible, hidden, or unrevealed thinking traces and still continues when thinking is on; it only fail-closes thinking-off if a visible reasoning trace leaks.
 
 ```bash
 python -m sixcat --base-url http://127.0.0.1:8085/v1 --model unknown-model \
@@ -190,15 +191,15 @@ Then invoke:
 1. **Asks for the target before probing anything.** It offers the exact model
    powering the current Hermes session, another Hermes profile, or an alternate
    OpenAI-compatible endpoint.
-2. **Shows the real identity.** Current/profile mode resolves the exact profile,
+2. **Asks the remaining questions immediately, all with options.** Sampling,
+   size, HumanEval execution, and thinking come next with no inspect/preflight
+   delay. Custom follow-ups are preset rows, not a typed template.
+3. **Shows the real identity.** Current/profile mode resolves the exact profile,
    provider, and model, including the current session's model override. Alternate
    endpoint mode verifies the selected model through `/v1/models`.
-3. **Previews the complete policy.** Before execution it shows temperature,
+4. **Previews the complete policy.** Before execution it shows temperature,
    top-p/top-k/min-p, thinking state, seed, category budgets, cited source,
    selection profile, and policy fingerprint in plain English.
-4. **Asks four explicit run questions.** Sampling, size, HumanEval execution, and
-   thinking are independently selectable; dependent Custom values are collected
-   afterward.
 5. **Prints the exact run receipt.** Target, command, result path, JSONL journal,
    timeout, policy fingerprint, and code mode are restated without credentials.
 6. **Runs in a tracked background process.** The skill reports category
@@ -247,12 +248,11 @@ The skill asks the target question first:
 - **🔌 Alternate OpenAI-compatible endpoint** — evaluate an already-running server
   selected through its `/v1/models` identity.
 
-After showing the exact target and policy preview, Hermes presents these four
-questions together:
+After the target answer, Hermes immediately presents these four questions
+together. It does not inspect or preflight first. Every question uses selectable
+options, including Custom follow-ups.
 
 #### A. 🎛️ How should the model sample answers?
-
-When a reviewed model-card mapping exists:
 
 - **🏷️ Vendor-recommended temperature/settings (recommended)** — cited
   temperature and token filters, plus seed `1` where supported. Thinking is chosen
@@ -261,15 +261,10 @@ When a reviewed model-card mapping exists:
   settings separately, then show a labelled delta.
 - **🧊 Deterministic temperature baseline** — temperature `0`, no seed unless
   explicitly supplied.
-- **🎛️ Custom sampling** — choose exact temperature and optional token filters.
+- **🎛️ Custom sampling** — choose one preset row (0.7/none, 1.0/0.95, 0.6/0.95/20/0, or 0.0/none).
 
-For an unknown or stealth model, **Custom sampling** becomes the recommendation,
-followed by the deterministic baseline. Sixcat does not offer a fake vendor
-comparison when no reviewed mapping exists. Custom uses this follow-up template:
-
-```text
-temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
-```
+If preview later shows no reviewed vendor mapping, Sixcat does not launch a fake
+vendor comparison. Switch to custom or strict from option rows.
 
 #### B. 📏 How large should the evaluation be?
 
@@ -279,8 +274,8 @@ temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
   10-minute cap. Useful for plumbing checks, not a final ranking.
 - **🧭 Full battery** — all 884 shipped rows with no wall cap; this can exceed an
   hour and cost substantially more on hosted models.
-- **🛠️ Custom size** — choose rows per category and wall-clock minutes. A zero
-  minute cap means uncapped.
+- **🛠️ Custom size** — choose a preset: 5/15 min, 10/20 min, 40/60 min, or
+  20 per category with no wall cap.
 
 #### C. 🧪 Should Sixcat execute generated HumanEval code?
 
@@ -294,14 +289,14 @@ temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
 #### D. 🧠 Should reasoning/thinking be enabled?
 
 - **🧠 Thinking on (recommended when supported)** — use the reasoning mode and
-  larger category budgets. This measures a reasoning model's stronger intended
-  mode but may be slower and more expensive.
-- **⚡ Thinking off** — faster, cheaper, and broadly compatible; appropriate for a
-  latency baseline or an endpoint that cannot expose reasoning.
+  larger category budgets. This remains the recommendation even when a cloud API
+  hides thinking token blocks.
+- **⚡ Thinking off** — faster, cheaper baseline. Do not pick this just because
+  traces are hidden.
 
-Thinking On is recommended unless the inspected model/provider is known not to
-support reasoning traces. A fail-closed pre-run probe verifies that the endpoint
-actually honors the selected state before any scored row starts.
+Thinking On is recommended unless the user chooses Off. The pre-run probe
+auto-detects visible, hidden, or unrevealed traces and still continues when On
+was selected. It only fail-closes Thinking Off if a visible reasoning trace leaks.
 
 ### What appears before execution
 

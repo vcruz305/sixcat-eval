@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.0
+version: 0.4.1
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -99,12 +99,114 @@ That is useful for apps but is not a raw model benchmark. The bundled runner
 instead uses Hermes' provider/auth resolver and a temporary authenticated
 loopback proxy to call the exact raw model with Sixcat's sampling parameters.
 
-Completion criterion: target kind, profile when applicable, exact model, and
-exact provider are explicit before policy/scope questions.
+Completion criterion: target kind is explicit. Do not inspect, preflight, or
+preview yet. The next assistant turn must be the follow-up `clarify` call.
 
-### 2. Detect the endpoint and model
+### 2. Immediately ask the remaining questions
 
-Run the bundled preflight through `terminal` from the project root:
+After the target answer, ask the follow-up `clarify` in the same turn you
+acknowledge it. Do not run `inspect`, `preflight`, `terminal`, or any other
+tool first. Do not write a long policy preview first. Every question, including
+dependent follow-ups, must use `clarify` with selectable options. Never ask the
+user to type a free-form sampling string, size, profile name, or URL as the
+only input.
+
+If the target is **another Hermes profile**, immediately offer up to four live
+profile names as choices (plus Other). If it is **an alternate endpoint**,
+immediately offer the common loopback candidates as choices (plus Other):
+
+- `http://127.0.0.1:8085/v1`
+- `http://127.0.0.1:8083/v1`
+- `http://127.0.0.1:8000/v1`
+- `http://127.0.0.1:30000/v1`
+
+Then immediately send one batched `clarify` form with four independently
+answerable questions. Prefix every question and every choice with the distinct
+emoji shown below. Always offer the four sampling choices now; do not wait to
+learn whether a reviewed mapping exists.
+
+#### A. 🎛️ How should the model sample answers?
+
+- **🏷️ Vendor-recommended temperature/settings (recommended)** — use the
+  reviewed model-card temperature and token filters; Sixcat uses seed `1` so
+  repeated runs are easier to compare. Thinking is selected separately below.
+  If preview later shows no reviewed mapping, do not launch a fake vendor run.
+- **🔬 Compare baseline vs vendor settings** — run the deterministic baseline
+  first, then the vendor-recommended settings, with separate receipts and a delta.
+- **🧊 Deterministic temperature baseline** — temperature `0` and no seed unless
+  the user explicitly supplies one. Thinking is selected separately below.
+- **🎛️ Custom sampling** — choose one of the preset sampling rows below.
+
+If Custom is selected, immediately ask one follow-up `clarify` with options.
+Do not use a fill-in template:
+
+- **🌡️ temperature=0.7, no filters (recommended custom)** — `--policy custom --temperature 0.7`
+- **🏷️ temperature=1.0, top_p=0.95** — GLM-5.x / many thinking-model cards
+- **🎯 temperature=0.6, top_p=0.95, top_k=20, min_p=0** — Qwen3-style thinking
+- **🧊 temperature=0.0, no filters** — greedy custom
+
+Restate the resolved flags before execution.
+
+#### B. 📏 How large should the evaluation be?
+
+- **⚖️ Standard (recommended)** — **20 scored items per category**, **about 120
+  scored rows total**, with a 30-minute wall-clock safety cap.
+- **⚡ Quick smoke** — 3 scored items per category, about 18 total, with a
+  10-minute cap; useful for checking plumbing, not ranking models.
+- **🧭 Full battery** — every shipped row (`--full --max-minutes 0`); warn that it
+  can exceed an hour and cost substantially more on hosted models.
+- **🛠️ Custom size** — choose one of the preset size rows below.
+
+If Custom size is selected, immediately ask one follow-up `clarify` with options:
+
+- **5️⃣ 5 per category, 15 minutes**
+- **🔟 10 per category, 20 minutes**
+- **4️⃣0️⃣ 40 per category, 60 minutes**
+- **♾️ 20 per category, no wall cap**
+
+The `--limit` value is always per category. Knowledge may draw from MMLU, ARC,
+HellaSwag, and WinoGrande, but those sources share the category cap; `--limit 20`
+must never become 80 Knowledge rows.
+
+Limited runs use frozen `challenge-v1` selection, not file prefixes: Quick starts
+with the hardest few items and Standard uses a hard/diverse 20. Code difficulty
+uses an independent 49-model HumanEval ranking; Full runs all 164 HumanEval tasks.
+Tools grade exact arguments, call count/order, multi-call requests, distractors,
+and abstention. Every receipt includes the selection profile and fingerprint;
+Full preserves the complete source corpus.
+
+#### C. 🧪 Should Sixcat execute generated HumanEval code?
+
+- **🛡️ Host-guarded HumanEval (recommended)** — execute generated Python in a
+  short-lived subprocess with `-I -S`, sanitized environment, temp directory,
+  timeout, AST escape checks, restricted builtins/imports, and a harness-owned
+  success receipt. This is low overhead but **not a security sandbox**.
+- **🚫 Skip generated-code execution** — add `--skip-code-exec`; Code becomes
+  `n/a` and the overall is visibly flagged `code-exec-disabled`.
+
+#### D. 🧠 Should reasoning/thinking be enabled?
+
+- **🧠 Thinking on (recommended when supported)** — request the model's reasoning
+  mode and automatically raise category token budgets. Recommend this for
+  reasoning-capable models, including cloud APIs that hide thinking token
+  blocks. Hidden or unrevealed traces are not a reason to turn thinking off.
+- **⚡ Thinking off** — faster, cheaper baseline. Do not choose this just because
+  the provider does not return `reasoning_content` or `<think>` blocks.
+
+Choose **On** by default unless the user picked Off. Sixcat's pre-run probe
+auto-detects visible, hidden, or unrevealed thinking and still continues when
+On was selected. It only fail-closes Thinking Off if a visible reasoning trace
+leaks. Map the choice to `--thinking on|off` for every sampling mode, including
+strict, vendor-recommended, compare, and custom.
+
+Completion criterion: exact sampling values, explicit thinking choice,
+per-category item cap/full mode, wall cap, and code-execution mode are explicit.
+All of those answers came from option rows, not a typed template.
+
+### 3. Detect the endpoint and model
+
+Only after the questions are answered, run the bundled preflight through
+`terminal` from the project root:
 
 ```text
 terminal(
@@ -129,17 +231,19 @@ For a Hermes runtime target, the `inspect` receipt replaces endpoint discovery.
 It must say `target_kind=hermes_runtime_model`, show the exact profile/model/
 provider, report `auth=resolved`, and state that the agent facade is bypassed.
 
-### 3. Preview what will run
+### 4. Preview what will run
 
-Before asking for run size, show the exact target, the resolved settings, and a
-plain-English explanation. Never show only internal words like `vendor`,
-`strict`, or `seed` and expect the user to know what they mean:
+After the questions are answered and the target is resolved, show the exact
+target, the resolved settings, and a plain-English explanation. Never show only
+internal words like `vendor`, `strict`, or `seed` and expect the user to know
+what they mean:
 
 - **Temperature controls randomness**: `0` is the most repeatable; higher values
   allow more varied answers.
 - **Top-p, top-k, and min-p filter** which next-token choices remain available.
   `none` means Sixcat does not send that control.
-- **Thinking controls whether** the endpoint is asked to expose a reasoning trace.
+- **Thinking controls whether** the endpoint is asked to use reasoning mode.
+  Hidden or unrevealed thinking token blocks still count as thinking on.
 - **Seed helps repeat** the same sampling path when the endpoint supports seeds;
   **some endpoints ignore it**, so it is not a universal reproducibility promise.
 - Show category token budgets, cited settings source, policy fingerprint, and every
@@ -147,92 +251,9 @@ plain-English explanation. Never show only internal words like `vendor`,
 
 A request for internal `--policy vendor` that resolves to strict is a fallback,
 not a vendor-recommended receipt. Never infer settings from model size or vendor
-name when the catalog has no reviewed row.
-
-### 4. Ask sampling setup, run size, code handling, and thinking
-
-Use one batched `clarify` form with four independently answerable questions.
-Prefix every question and every choice with the distinct emoji shown below.
-
-#### A. 🎛️ How should the model sample answers?
-
-When a reviewed mapping exists, offer:
-
-- **🏷️ Vendor-recommended temperature/settings (recommended)** — use the
-  reviewed model-card temperature and token filters; Sixcat uses seed `1` so
-  repeated runs are easier to compare. Thinking is selected separately below.
-- **🔬 Compare baseline vs vendor settings** — run the deterministic baseline
-  first, then the vendor-recommended settings, with separate receipts and a delta.
-- **🧊 Deterministic temperature baseline** — temperature `0` and no seed unless
-  the user explicitly supplies one. Thinking is selected separately below.
-- **🎛️ Custom sampling** — the user chooses temperature and any optional controls.
-
-For an **unknown or stealth model**, there is no trustworthy model-card mapping.
-Offer **🎛️ Custom sampling** first as the recommendation, followed by
-**🧊 Deterministic baseline**. **Do not offer Both when no reviewed vendor mapping exists**;
-running strict twice with a different seed is not a meaningful comparison.
-
-If Custom is selected, ask one open-ended follow-up using this fill-in template:
-
-```text
-temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
-```
-
-Explain that only `temperature` is required. Parse `none` as an omitted control
-and map the values to `--policy custom --temperature ...` plus optional
-`--top-p`, `--top-k`, `--min-p`, and `--seed` flags. Restate
-all resolved values before execution.
-
-#### B. 📏 How large should the evaluation be?
-
-- **⚖️ Standard (recommended)** — **20 scored items per category**, **about 120
-  scored rows total**, with a 30-minute wall-clock safety cap.
-- **⚡ Quick smoke** — 3 scored items per category, about 18 total, with a
-  10-minute cap; useful for checking plumbing, not ranking models.
-- **🧭 Full battery** — every shipped row (`--full --max-minutes 0`); warn that it
-  can exceed an hour and cost substantially more on hosted models.
-- **🛠️ Custom size** — ask for items **per category** and wall-clock minutes.
-  `0` minutes means no cap. The cap stops new rows but preserves partial receipts.
-
-The `--limit` value is always per category. Knowledge may draw from MMLU, ARC,
-HellaSwag, and WinoGrande, but those sources share the category cap; `--limit 20`
-must never become 80 Knowledge rows.
-
-Limited runs use frozen `challenge-v1` selection, not file prefixes: Quick starts
-with the hardest few items and Standard uses a hard/diverse 20. Code difficulty
-uses an independent 49-model HumanEval ranking; Full runs all 164 HumanEval tasks.
-Tools grade exact arguments, call count/order, multi-call requests, distractors,
-and abstention. Every receipt includes the selection profile and fingerprint;
-Full preserves the complete source corpus.
-
-#### C. 🧪 Should Sixcat execute generated HumanEval code?
-
-- **🛡️ Host-guarded HumanEval (recommended)** — execute generated Python in a
-  short-lived subprocess with `-I -S`, sanitized environment, temp directory,
-  timeout, AST escape checks, restricted builtins/imports, and a harness-owned
-  success receipt. This is low overhead but **not a security sandbox**.
-- **🚫 Skip generated-code execution** — add `--skip-code-exec`; Code becomes
-  `n/a` and the overall is visibly flagged `code-exec-disabled`.
-
-#### D. 🧠 Should reasoning/thinking be enabled?
-
-- **🧠 Thinking on (recommended when supported)** — lets a reasoning model use
-  its reasoning mode and automatically raises category token budgets. This is
-  the default recommendation for capable reasoning models because it measures
-  their stronger intended mode, but it can be slower and cost more.
-- **⚡ Thinking off** — faster, cheaper, and more broadly compatible; use it for
-  a latency-oriented baseline or when the endpoint cannot return a reasoning
-  trace.
-
-Choose **On** by default unless the inspected model/provider is known not to
-support reasoning traces. Sixcat's pre-run policy probe must fail closed before
-scoring if On was selected but the endpoint does not actually expose reasoning.
-Map the choice to `--thinking on|off` for every sampling mode, including strict,
-vendor-recommended, compare, and custom.
-
-If Custom sampling or Custom size is selected, ask its dependent follow-up only
-after the batch. Completion criterion: exact sampling values, explicit thinking
-choice, per-category item cap/full mode, wall cap, and code-execution mode are explicit.
+name when the catalog has no reviewed row. If the user picked vendor or compare
+and preview shows that fallback, ask with options whether to continue as custom
+or strict instead of launching a fake vendor run.
 
 ### 5. Show the exact run receipt before execution
 
@@ -329,13 +350,19 @@ After process exit:
 6. For `both`, report vendor-minus-strict and preserve both artifact paths.
 
 A run with timeout, truncation, missing confidence, identity drift, duplicate
-rows, or policy-probe failure is incomplete or non-comparable. Keep the files,
-label the failure honestly, and ask before rerunning.
+rows, or a failed probe request is incomplete or non-comparable. Hidden or
+unrevealed thinking traces are not a probe failure. Keep the files, label the
+failure honestly, and ask before rerunning.
 
 ## Additional Guardrails
 
 - **Current model is the default target.** Ask first; never scan unrelated local
   ports before offering the exact model backing the calling Hermes session.
+- **Follow-ups are immediate and option-only.** After the target answer, the next
+  turn is a `clarify` with choices. Do not inspect first. Do not ask for a typed
+  sampling template.
+- **Hidden thinking is still thinking on.** Do not recommend Off because a cloud
+  API omitted `reasoning_content` or `<think>` blocks.
 - **Agent API is not raw inference.** Do not score the normal Hermes API server
   agent facade as if it were the underlying model. Use `hermes_runner.py`.
 - **No silent provider fallback.** Hermes-runtime mode checks the actual route
@@ -352,6 +379,8 @@ label the failure honestly, and ask before rerunning.
 The skill is working when:
 
 - the target choice was asked before endpoint detection;
+- the follow-up questions were asked immediately after the target answer, before
+  inspect or preflight, and every question used selectable options;
 - preflight returns `status=ready` for an alternate endpoint, or Hermes inspect
   returns one exact profile/model/provider plus a policy fingerprint;
 - the user approved policy and scope after seeing exact sampling values;

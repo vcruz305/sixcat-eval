@@ -77,6 +77,36 @@ def extract_server_timings(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _reasoning_from_message(msg: dict[str, Any], data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Normalize provider reasoning text and hidden-trace metadata."""
+    raw_reason = msg.get("reasoning_content")
+    if raw_reason in (None, ""):
+        raw_reason = msg.get("reasoning")
+    if isinstance(raw_reason, dict):
+        text = str(raw_reason.get("content") or raw_reason.get("text") or "")
+    else:
+        text = str(raw_reason or "")
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    token_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    if not isinstance(token_details, dict):
+        token_details = {}
+    reasoning_tokens = None
+    for candidate in (
+        usage.get("reasoning_tokens"),
+        token_details.get("reasoning_tokens"),
+        token_details.get("reasoning"),
+    ):
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, float)) or candidate < 0:
+            continue
+        reasoning_tokens = int(candidate)
+        break
+    return text, {
+        "reasoning_tokens": reasoning_tokens,
+        "reasoning_details": msg.get("reasoning_details") or data.get("reasoning_details"),
+        "thinking_field": msg.get("thinking"),
+    }
+
+
 def apply_stream_speed(
     timings: dict[str, Any],
     *,
@@ -201,14 +231,23 @@ class ChatClient:
             and wall_s > 0
         ):
             wall_tps = float(completion_tokens) / wall_s
+        # Reasoning traces are not standardized: DeepSeek/Qwen use
+        # `reasoning_content`, OpenAI/Together use `reasoning`, and some
+        # cloud gateways hide the text while still reporting token counts.
+        reasoning, reasoning_meta = _reasoning_from_message(msg, data)
         return {
             "text": msg.get("content") or "",
             "tool_calls": msg.get("tool_calls") or [],
             "finish": choice.get("finish_reason"),
-            "reasoning_content": msg.get("reasoning_content") or "",
+            "reasoning_content": reasoning,
+            "reasoning_tokens": reasoning_meta["reasoning_tokens"],
+            "reasoning_details": reasoning_meta["reasoning_details"],
+            "thinking_field": reasoning_meta["thinking_field"],
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": completion_tokens,
+                "reasoning_tokens": reasoning_meta["reasoning_tokens"],
+                "completion_tokens_details": usage.get("completion_tokens_details"),
             },
             **timings,
             "wall_s": wall_s,

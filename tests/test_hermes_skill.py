@@ -58,6 +58,9 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "not a security sandbox",
         "Thinking on (recommended when supported)",
         "Do not start, stop, or replace",
+        "immediately ask the remaining questions",
+        "selectable options",
+        "Hidden thinking is still thinking on",
     ):
         assert required.casefold() in body.casefold()
     assert "C:/Users/" not in content
@@ -82,7 +85,7 @@ def test_skill_questions_have_plain_english_explainers_distinct_emojis_and_custo
     content = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     body = content.split("\n---\n", 1)[1]
 
-    for emoji in ("🧠", "👤", "🔌", "🎛️", "🧊", "🏷️", "🔬", "⚖️", "⚡", "🧭", "🛠️", "🧪", "🛡️", "🚫"):
+    for emoji in ("🧠", "👤", "🔌", "🎛️", "🧊", "🏷️", "🔬", "⚖️", "⚡", "🧭", "🛠️", "🧪", "🛡️", "🚫", "🌡️", "5️⃣", "🔟", "♾️"):
         assert emoji in body
     for explainer in (
         "20 scored items per category",
@@ -93,12 +96,13 @@ def test_skill_questions_have_plain_english_explainers_distinct_emojis_and_custo
         "seed helps repeat",
         "some endpoints ignore it",
         "vendor-recommended temperature/settings",
-        "unknown or stealth model",
         "custom sampling",
         "not a security sandbox",
+        "selectable options",
     ):
         assert explainer.casefold() in body.casefold()
-    assert "Do not offer Both when no reviewed vendor mapping exists".casefold() in body.casefold()
+    assert "Do not use a fill-in template".casefold() in body.casefold()
+    assert "temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none".casefold() not in body.casefold()
     assert "Items per dataset".casefold() not in body.casefold()
 
 
@@ -164,7 +168,9 @@ def test_hermes_runner_proxy_forwards_sampling_tools_and_exact_runtime_identity(
     assert out["text"] == "B"
     assert out["reasoning_content"] == "checked"
     assert out["finish"] == "tool_calls"
-    assert out["usage"] == {"prompt_tokens": 11, "completion_tokens": 7}
+    assert out["usage"]["prompt_tokens"] == 11
+    assert out["usage"]["completion_tokens"] == 7
+    assert out["usage"].get("reasoning_tokens") in (None, 0)
     assert out["tool_calls"][0]["function"]["name"] == "read_file"
     assert len(calls) == 1
     call = calls[0]

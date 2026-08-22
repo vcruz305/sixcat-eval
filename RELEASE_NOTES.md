@@ -1,3 +1,48 @@
+# Sixcat 0.4.1 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.0
+
+**Status:** final release
+
+Sixcat 0.4.1 keeps the conversational `/sixcat-eval` flow moving, adds the
+reviewed GLM-5.x sampling family, and stops treating hidden cloud thinking as a
+failed thinking-on run.
+
+## Hermes skill follow-ups
+
+- After the target question, the next turn is the follow-up `clarify`. The skill
+  no longer inspects or preflights before asking sampling, size, code, and
+  thinking questions.
+- Every question uses selectable options. Custom sampling and custom size are
+  preset rows, not a typed `temperature=0.7, top_p=none, ...` template.
+- Thinking On stays the recommendation when a cloud API omits `reasoning_content`
+  or `<think>` blocks.
+
+## GLM-5.x vendor family
+
+- New reviewed family `glm-5.x` covers `glm-5`, `glm-5.1`, `glm-5.2`, and
+  `glm-5.3` (including `z-ai/glm-5.3` and `-free` aliases).
+- Official GLM-5.2 HLE/reasoning eval settings: `temperature=1.0`, `top_p=0.95`,
+  thinking on, `reasoning_effort=max`.
+- GLM-5.3 uses the same temperature/settings as GLM-5.2.
+
+## Hidden thinking probe
+
+- Thinking On no longer aborts when the provider hides or omits thinking token
+  blocks. The probe records `reasoning_exposure` as `visible`, `hidden`, or
+  `unrevealed` and continues.
+- The client now normalizes OpenAI-style `reasoning` text and usage
+  `reasoning_tokens` / `completion_tokens_details`.
+- Thinking Off still fail-closes if a visible reasoning trace leaks.
+
+## Verification receipts
+
+- `python -m pytest -q`: **213 passed, 169 subtests passed**.
+
+---
+
 # Sixcat 0.4.0 Release Notes
 
 **Release date:** 2026-08-22
@@ -330,6 +375,7 @@ Every row has `verified: true`, an HTTPS source, and a reviewed date.
 | `deepseek-v4` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) |
 | `deepseek-v3.2` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V3.2) |
 | `deepseek-r1` | 0.6 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-R1) |
+| `glm-5.x` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/zai-org/GLM-5.2) |
 | `glm-4.7` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/zai-org/GLM-4.7) |
 | `glm-4.6` | 1.0 | 0.95 | 40 | n/a | on | [official](https://huggingface.co/zai-org/GLM-4.6) |
 | `kimi-k2-thinking` | 1.0 | n/a | n/a | n/a | on | [official](https://huggingface.co/moonshotai/Kimi-K2-Thinking) |

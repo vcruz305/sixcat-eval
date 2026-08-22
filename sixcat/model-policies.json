@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_date": "2026-08-21",
+  "reviewed_date": "2026-08-22",
   "policies": [
     {
       "family": "qwen3.8",
@@ -298,6 +298,23 @@
       "extra": {},
       "source_url": "https://huggingface.co/deepseek-ai/DeepSeek-R1",
       "source_note": "Official card recommended sampling: temperature=0.6, top_p=0.95"
+    },
+    {
+      "family": "glm-5.x",
+      "reviewed_date": "2026-08-22",
+      "patterns": ["glm-5.3", "glm5.3", "glm-5.2", "glm5.2", "glm-5.1", "glm5.1", "glm-5", "glm5"],
+      "exclude_patterns": ["base", "vl", "vision", "5v"],
+      "verified": true,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "top_k": null,
+      "min_p": null,
+      "thinking": true,
+      "extra": {
+        "reasoning_effort": "max"
+      },
+      "source_url": "https://huggingface.co/zai-org/GLM-5.2",
+      "source_note": "Official GLM-5.2 HLE/reasoning eval: temperature=1.0, top_p=0.95. GLM-5.3 documents the same defaults; use this family for the whole 5.x line."
     },
     {
       "family": "glm-4.7",

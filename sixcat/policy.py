@@ -358,8 +358,62 @@ _POLICY_PROBE_PROMPT = (
 )
 
 
+def _as_nonneg_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return int(value)
+
+
+def thinking_evidence(out: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
+    """Classify whether a completion revealed, hid, or omitted thinking traces."""
+    dedicated = str(out.get("reasoning_content") or "").strip()
+    inline_matches = _INLINE_THINK.findall(str(out.get("text") or ""))
+    inline = "\n".join(match.strip() for match in inline_matches if match.strip())
+    usage = out.get("usage") or {}
+    if not isinstance(usage, Mapping):
+        usage = {}
+    details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    if not isinstance(details, Mapping):
+        details = {}
+    reasoning_tokens = None
+    for candidate in (
+        out.get("reasoning_tokens"),
+        usage.get("reasoning_tokens"),
+        details.get("reasoning_tokens"),
+        details.get("reasoning"),
+    ):
+        parsed = _as_nonneg_int(candidate)
+        if parsed is not None:
+            reasoning_tokens = parsed
+            break
+    hidden_payload = any(
+        bool(out.get(key))
+        for key in ("reasoning_details", "encrypted_reasoning", "thinking_field")
+    )
+    reasoning_chars = len(dedicated)
+    inline_chars = len(inline)
+    if reasoning_chars or inline_chars:
+        exposure = "visible"
+    elif hidden_payload or (reasoning_tokens or 0) > 0:
+        exposure = "hidden"
+    else:
+        exposure = "unrevealed"
+    return {
+        "reasoning_chars": reasoning_chars,
+        "inline_reasoning_chars": inline_chars,
+        "reasoning_tokens": reasoning_tokens,
+        "reasoning_exposure": exposure,
+    }
+
+
 def probe_policy(client: Any) -> dict[str, Any]:
-    """Verify the server honors this client's thinking toggle before scoring."""
+    """Verify the thinking toggle before scoring.
+
+    Thinking On does not require the provider to reveal thinking token blocks.
+    Cloud gateways often keep CoT internal; that is recorded as hidden or
+    unrevealed and the run continues. Thinking Off still fails if a visible
+    reasoning trace leaks into the completion.
+    """
     expected_thinking = bool(client.policy.thinking)
     try:
         out = client.complete(_POLICY_PROBE_PROMPT, max_tokens=256)
@@ -370,17 +424,17 @@ def probe_policy(client: Any) -> dict[str, Any]:
             "reason": f"probe request failed: {exc}",
         }
 
-    dedicated = str(out.get("reasoning_content") or "").strip()
-    inline_matches = _INLINE_THINK.findall(str(out.get("text") or ""))
-    inline = "\n".join(match.strip() for match in inline_matches if match.strip())
-    reasoning_chars = len(dedicated)
-    inline_chars = len(inline)
-    visible_reasoning = reasoning_chars + inline_chars
-
-    if expected_thinking and visible_reasoning == 0:
-        status = "failed"
-        reason = "thinking requested but no reasoning_content or inline <think> trace was returned"
-    elif not expected_thinking and (reasoning_chars > 0 or inline_chars > 0):
+    evidence = thinking_evidence(out)
+    exposure = evidence["reasoning_exposure"]
+    if expected_thinking:
+        status = "ok"
+        if exposure == "visible":
+            reason = "thinking toggle observed"
+        elif exposure == "hidden":
+            reason = "thinking on; provider hid thinking token blocks"
+        else:
+            reason = "thinking on; provider did not reveal thinking token blocks"
+    elif exposure == "visible":
         status = "failed"
         reason = "thinking disabled but the server returned a reasoning trace"
     else:
@@ -392,8 +446,10 @@ def probe_policy(client: Any) -> dict[str, Any]:
         "status": status,
         "expected_thinking": expected_thinking,
         "reason": reason,
-        "reasoning_chars": reasoning_chars,
-        "inline_reasoning_chars": inline_chars,
+        "reasoning_chars": evidence["reasoning_chars"],
+        "inline_reasoning_chars": evidence["inline_reasoning_chars"],
+        "reasoning_tokens": evidence["reasoning_tokens"],
+        "reasoning_exposure": exposure,
         "finish": out.get("finish"),
         "completion_tokens": usage.get("completion_tokens"),
         "request_params": out.get("request_params"),

@@ -334,6 +334,7 @@ class TestPolicyResolution(unittest.TestCase):
             "DeepSeek-V3.2-Speciale",
             "MiniMax-Text-01",
             "gemma-4-31b-pt",
+            "GLM-5V-Turbo",
         )
         for model in unreviewed:
             with self.subTest(model=model), self.assertWarnsRegex(RuntimeWarning, "falling back to strict"):
@@ -474,6 +475,10 @@ class TestPolicyResolution(unittest.TestCase):
             ("DeepSeek-R1-0528", 0.6, 0.95, None, None, True, "DeepSeek-R1"),
             ("GLM-4.7", 1.0, 0.95, None, None, True, "GLM-4.7"),
             ("GLM-4.6", 1.0, 0.95, 40, None, True, "GLM-4.6"),
+            ("z-ai/glm-5.3", 1.0, 0.95, None, None, True, "GLM-5.2"),
+            ("GLM-5.2", 1.0, 0.95, None, None, True, "GLM-5.2"),
+            ("glm-5.1", 1.0, 0.95, None, None, True, "GLM-5.2"),
+            ("glm-5", 1.0, 0.95, None, None, True, "GLM-5.2"),
             ("Kimi-K2-Thinking", 1.0, None, None, None, True, "Kimi-K2-Thinking"),
             ("Kimi-K2-Instruct", 0.6, None, None, None, False, "Kimi-K2-Instruct"),
             ("gpt-oss-120b", 1.0, 1.0, None, None, True, "openai/gpt-oss"),
@@ -540,6 +545,25 @@ class TestPolicyResolution(unittest.TestCase):
         self.assertEqual((pro_preview.temperature, pro_preview.top_p), (1.0, 1.0))
         self.assertIn("deepseek-ai/DeepSeek-V4-Pro", pro_preview.source)
         self.assertNotIn("0813", pro_preview.source)
+
+    def test_glm53_uses_the_same_vendor_temps_as_glm52(self):
+        from sixcat.policy import resolve_policy
+
+        glm52 = resolve_policy("vendor", "GLM-5.2")
+        glm53 = resolve_policy("vendor", "z-ai/glm-5.3")
+        glm53_free = resolve_policy("vendor", "z-ai/glm-5.3-free")
+
+        for policy in (glm52, glm53, glm53_free):
+            self.assertEqual(
+                (policy.name, policy.temperature, policy.top_p, policy.top_k, policy.min_p, policy.thinking),
+                ("vendor", 1.0, 0.95, None, None, True),
+            )
+            self.assertEqual(policy.extra["reasoning_effort"], "max")
+            self.assertIn("vendor:glm-5.x", policy.source)
+        self.assertEqual(
+            (glm52.temperature, glm52.top_p, glm52.thinking, glm52.extra["reasoning_effort"]),
+            (glm53.temperature, glm53.top_p, glm53.thinking, glm53.extra["reasoning_effort"]),
+        )
 
     def test_vendor_catalog_entries_are_reviewed_citations(self):
         import json
@@ -810,6 +834,45 @@ class TestPolicyAwareClient(unittest.TestCase):
         self.assertEqual(out["request_params"]["max_tokens"], 99)
         self.assertEqual(out["request_params"]["enable_thinking"], True)
         self.assertEqual(out["reasoning_content"], "17*23=391")
+
+    def test_client_normalizes_reasoning_alias_and_hidden_token_counts(self):
+        import json
+        from unittest.mock import patch
+
+        from sixcat.client import ChatClient
+        from sixcat.policy import Policy
+
+        policy = Policy("custom", 1.0, 0.95, None, None, True, {"math": 2048}, {}, "test")
+        response_body = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": "391", "reasoning": "17*23=391"},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 80,
+                "completion_tokens_details": {"reasoning_tokens": 64},
+            },
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return json.dumps(response_body).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            out = ChatClient("http://localhost:9999/v1", "model", policy).complete("probe")
+
+        self.assertEqual(out["reasoning_content"], "17*23=391")
+        self.assertEqual(out["reasoning_tokens"], 64)
+        self.assertEqual(out["usage"]["reasoning_tokens"], 64)
 
     def test_policy_extra_cannot_override_protected_request_fields(self):
         from sixcat.policy import Policy
@@ -1088,19 +1151,32 @@ class TestPolicyProbe(unittest.TestCase):
         self.assertEqual(probe["reasoning_chars"], 0)
         self.assertEqual(len(client.calls), 1)
 
-    def test_thinking_requires_reasoning_even_if_answer_is_correct(self):
+    def test_thinking_on_continues_when_provider_hides_or_omits_traces(self):
         from sixcat.policy import Policy, probe_policy
 
         policy = Policy("vendor", 0.6, 0.95, 20, None, True, {"math": 2048}, {}, "test")
-        client = self.FakeClient(
-            policy,
-            {"text": "391", "reasoning_content": "", "finish": "stop", "usage": {"completion_tokens": 2}},
-        )
+        hidden = {
+            "text": "391",
+            "reasoning_content": "",
+            "finish": "stop",
+            "usage": {"completion_tokens": 80, "reasoning_tokens": 64},
+        }
+        unrevealed = {
+            "text": "391",
+            "reasoning_content": "",
+            "finish": "stop",
+            "usage": {"completion_tokens": 2},
+        }
 
-        probe = probe_policy(client)
+        hidden_probe = probe_policy(self.FakeClient(policy, hidden))
+        self.assertEqual(hidden_probe["status"], "ok")
+        self.assertEqual(hidden_probe["reasoning_exposure"], "hidden")
+        self.assertIn("hid thinking token blocks", hidden_probe["reason"])
 
-        self.assertEqual(probe["status"], "failed")
-        self.assertIn("thinking requested", probe["reason"])
+        unrevealed_probe = probe_policy(self.FakeClient(policy, unrevealed))
+        self.assertEqual(unrevealed_probe["status"], "ok")
+        self.assertEqual(unrevealed_probe["reasoning_exposure"], "unrevealed")
+        self.assertIn("did not reveal", unrevealed_probe["reason"])
 
     def test_thinking_accepts_dedicated_or_inline_reasoning(self):
         from sixcat.policy import Policy, probe_policy
@@ -1195,7 +1271,33 @@ class TestPolicyRunIntegration(unittest.TestCase):
         self.assertIn("code execution: host-guarded", table)
         self.assertIn("overall[strict]", table)
 
-    def test_failed_thinking_probe_aborts_before_first_category(self):
+    def test_failed_probe_request_aborts_before_first_category(self):
+        from unittest.mock import patch
+
+        from sixcat.policy import Policy
+        from sixcat.run import run_battery
+
+        policy = Policy("vendor", 0.6, 0.95, 20, None, True, {"knowledge": 768}, {}, "test")
+
+        class BoomClient:
+            def __init__(self):
+                self.policy = policy
+                self.model = "ornith-test"
+                self.base_url = "http://localhost/v1"
+                self.api_key = "none"
+
+            def complete(self, prompt, **kwargs):
+                raise RuntimeError("upstream timeout")
+
+        with (
+            patch("sixcat.run.fetch_server_props", return_value={"source": "test"}),
+            patch("sixcat.run.run_knowledge") as run_knowledge,
+            self.assertRaisesRegex(RuntimeError, "policy probe failed"),
+        ):
+            run_battery(BoomClient(), limit=1)
+        run_knowledge.assert_not_called()
+
+    def test_thinking_on_without_visible_trace_still_starts_scoring(self):
         from unittest.mock import patch
 
         from sixcat.policy import Policy
@@ -1206,13 +1308,20 @@ class TestPolicyRunIntegration(unittest.TestCase):
             policy,
             {"text": "391", "reasoning_content": "", "finish": "stop", "usage": {}},
         )
+        rows = [{"ok": True, "finish": "stop", "ctok": 2, "parse_confidence": "high"}]
         with (
             patch("sixcat.run.fetch_server_props", return_value={"source": "test"}),
-            patch("sixcat.run.run_knowledge") as run_knowledge,
-            self.assertRaisesRegex(RuntimeError, "policy probe failed"),
+            patch("sixcat.run.run_knowledge", return_value=rows),
+            patch("sixcat.run.run_math", return_value=rows),
+            patch("sixcat.run.run_truth", return_value=rows),
+            patch("sixcat.run.run_instruct", return_value=rows),
+            patch("sixcat.run.run_code", return_value=rows),
+            patch("sixcat.run.run_tools", return_value=rows),
         ):
-            run_battery(client, limit=1)
-        run_knowledge.assert_not_called()
+            result = run_battery(client, limit=1)
+
+        self.assertEqual(result["policy_probe"], "ok")
+        self.assertEqual(result["policy_probe_details"]["reasoning_exposure"], "unrevealed")
 
 
 if __name__ == "__main__":
