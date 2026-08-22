@@ -61,6 +61,8 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "immediately ask the remaining questions",
         "selectable options",
         "Hidden thinking is still thinking on",
+        "No full rerun after TIMEUP",
+        "--retry remaining",
     ):
         assert required.casefold() in body.casefold()
     assert "C:/Users/" not in content

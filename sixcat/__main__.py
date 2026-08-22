@@ -167,6 +167,16 @@ def _run_main(argv: list[str]) -> int:
         help="Ignore an existing log and start a new one.",
     )
     p.add_argument(
+        "--retry",
+        choices=("failed", "remaining", "incomplete"),
+        default=None,
+        help=(
+            "Merge another pass into the same --log/--out instead of a full rerun. "
+            "remaining=unscored items, failed=previous FAIL rows only, "
+            "incomplete=failed plus remaining. Requires resume (not --no-resume)."
+        ),
+    )
+    p.add_argument(
         "--budget",
         action="append",
         default=[],
@@ -196,6 +206,9 @@ def _run_main(argv: list[str]) -> int:
             requested_log = args.out.with_suffix(".jsonl")
         else:
             requested_log = Path("results") / f"{args.model}.jsonl"
+
+    if args.retry and args.no_resume:
+        p.error("--retry merges into an existing journal; do not pass --no-resume")
 
     seconds = None if args.max_minutes == 0 else args.max_minutes * 60.0
     policy_names = ("strict", "vendor") if args.policy == "both" else (args.policy,)
@@ -247,12 +260,20 @@ def _run_main(argv: list[str]) -> int:
             request_timeout=args.request_timeout,
             skip_code_exec=args.skip_code_exec,
         )
+        if args.retry and not Path(log_path).exists():
+            p.error(f"--retry requires an existing journal at {log_path}")
         try:
             journal = RunJournal(log_path, resume=not args.no_resume, identity=identity)
         except ValueError as exc:
             p.error(str(exc))
         budget = TimeBudget(seconds=seconds)
-        session = Session(journal, budget)
+        session = Session(
+            journal,
+            budget,
+            retry_failed=args.retry in {"failed", "incomplete"},
+            include_remaining=args.retry != "failed",
+            retry_mode=args.retry,
+        )
         print(f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes}", flush=True)
         try:
             client = ChatClient(

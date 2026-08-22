@@ -251,7 +251,7 @@ def run_code(
     *,
     skip_code_exec: bool = False,
 ) -> list[dict]:
-    from .journal import emit, gate
+    from .journal import apply_item_gate, emit
 
     if skip_code_exec:
         return []
@@ -265,11 +265,10 @@ def run_code(
     )
     for item in items:
         key = str(item.get("task_id") or "unknown")
-        g = gate(session, "code", key)
-        if g == "stop":
+        action = apply_item_gate(session, "code", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         prompt = item["prompt"]
         out = client.complete(

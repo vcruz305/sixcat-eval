@@ -129,18 +129,17 @@ def _tool_answer_ok(want: Any, tool_calls: list[Any], text: str) -> tuple[bool, 
 
 
 def run_tools(client, limit: int | None, session=None, max_tokens: int | None = None) -> list[dict]:
-    from .journal import emit, gate
+    from .journal import apply_item_gate, emit
 
     mt = 256 if max_tokens is None else max_tokens
     items = ITEMS if limit is None else ITEMS[:limit]
     rows = []
     for name, want, prompt in items:
         key = f"tool:{name}"
-        g = gate(session, "tools", key)
-        if g == "stop":
+        action = apply_item_gate(session, "tools", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = client.complete(prompt, max_tokens=mt, tools=TOOLS)
         ok, pred = _tool_answer_ok(want, out["tool_calls"], out["text"] or "")

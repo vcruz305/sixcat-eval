@@ -1,3 +1,32 @@
+# Sixcat 0.4.2 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.1
+
+**Status:** final release
+
+Sixcat 0.4.2 merges a follow-up pass into the original 30-minute receipt instead
+of asking for a full rerun when the wall cap leaves leftover or failed items.
+
+## Merged retry after TIMEUP
+
+- `--retry remaining` continues unscored items on the same `--log`/`--out`.
+- `--retry failed` rescores previous FAIL rows only, keeps PASS rows, and leaves
+  remaining unrun items untouched.
+- `--retry incomplete` retries failed items and then continues remaining ones.
+- New rows append to the journal (last write wins) and rewrite one merged JSON.
+- `--retry` cannot be combined with `--no-resume`.
+- Result JSON now includes a `continuation` object with remaining/failed counts.
+- `/sixcat-eval` asks an option-only follow-up after TIMEUP and must not suggest
+  a clean full rerun.
+
+## Verification receipts
+
+- `python -m pytest -q`: **222 passed, 169 subtests passed**.
+
+---
+
 # Sixcat 0.4.1 Release Notes
 
 **Release date:** 2026-08-22

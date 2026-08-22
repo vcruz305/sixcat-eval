@@ -4,9 +4,9 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.1 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for GLM-5.x vendor
-settings, hidden-thinking probe behavior, the option-only Hermes follow-up flow,
-scorer/parser v4, and migration notes.
+**0.4.2 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for merged
+`--retry` continuations after a 30-minute TIMEUP, plus GLM-5.x vendor settings
+and hidden-thinking probe behavior.
 
 ## Top features
 
@@ -159,6 +159,9 @@ TIMEUP before instruct/ifeval:1005
 ```
 
 `--full` is 884 items. It still stops at 30 minutes unless you pass `--max-minutes 0`.
+If the cap hits first, do **not** start a clean `--no-resume` battery. Continue the
+same `--log`/`--out` with `--retry remaining` (unscored items), `--retry failed`
+(FAIL rows only), or `--retry incomplete` (both). The new rows merge into one result.
 
 ## Hermes workflow
 

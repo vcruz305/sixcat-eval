@@ -7,7 +7,7 @@ from .client import ChatClient, fetch_server_props
 from .code import run_code
 from .dataio import read_jsonl
 from .instruct import item_ok
-from .journal import Session, emit, gate
+from .journal import Session, apply_item_gate, emit
 from .policy import STRICT_BUDGETS, probe_policy
 from .report import PARSER_VERSION, RESULT_SCHEMA
 from .score import (
@@ -41,7 +41,43 @@ from .selection import (
 # alone -- see sixcat-sampling-policy-review-2026-08-20.md).
 DEFAULT_BUDGETS = STRICT_BUDGETS
 
+FULL_SCORED_ITEMS = 884
 LETTERS = "ABCDEFGHIJKLMNOP"
+
+
+def expected_scored_items(limit: int | None, *, skip_code_exec: bool = False) -> int:
+    """How many rows this scope should produce if it finishes."""
+    if limit is None:
+        return FULL_SCORED_ITEMS - (164 if skip_code_exec else 0)
+    categories = 5 if skip_code_exec else 6
+    return categories * limit
+
+
+def continuation_offer(result: dict[str, Any]) -> dict[str, Any]:
+    """Describe leftover work that can merge into this receipt without a full rerun."""
+    skip_code = result.get("code_execution") == "disabled"
+    expected = expected_scored_items(result.get("limit"), skip_code_exec=skip_code)
+    scored = sum(int(count or 0) for count in (result.get("n") or {}).values())
+    remaining = max(expected - scored, 0)
+    failed_keys: list[str] = []
+    for category, rows in (result.get("items") or {}).items():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or row.get("ok") is True:
+                continue
+            failed_keys.append(f"{row.get('cat') or category}/{row.get('key') or row.get('id')}")
+    return {
+        "expected": expected,
+        "scored": scored,
+        "remaining": remaining,
+        "failed": len(failed_keys),
+        "failed_keys": failed_keys,
+        "timed_out": bool(result.get("timed_out")),
+        "can_continue_remaining": remaining > 0,
+        "can_retry_failed": bool(failed_keys),
+        "merged_rerun": "--retry remaining|failed|incomplete on the same --log/--out",
+    }
 
 
 def split_category_limit(limit: int | None, dataset_count: int) -> list[int | None]:
@@ -75,8 +111,8 @@ def arc_answer_letter(item: dict[str, Any]) -> str:
         raise ValueError(f"ARC answer {answer!r} is absent from labels {labels!r}") from exc
 
 
-def _gate(session: Session | None, cat: str, key: str):
-    return gate(session, cat, key)
+def _take(session: Session | None, cat: str, key: str, rows: list[dict]) -> str:
+    return apply_item_gate(session, cat, key, rows)
 
 
 def _emit(session: Session | None, cat: str, key: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -156,11 +192,10 @@ def run_knowledge(
     mmlu_limit, arc_limit, hellaswag_limit, winogrande_limit = split_category_limit(limit, 4)
     for i, item in select_indexed_by_indices(read_jsonl("tiny_mmlu.jsonl"), mmlu_limit, KNOWLEDGE_CHALLENGE_INDICES["mmlu"]):
         key = f"mmlu:{i}"
-        g = _gate(session, "knowledge", key)
-        if g == "stop":
+        action = _take(session, "knowledge", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = _ask_mc(client, item["question"], item["choices"], max_tokens=mt)
         pred = out["pred"]
@@ -168,11 +203,10 @@ def run_knowledge(
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
     for i, item in select_indexed_by_indices(read_jsonl("tiny_arc.jsonl"), arc_limit, KNOWLEDGE_CHALLENGE_INDICES["arc"]):
         key = f"arc:{i}"
-        g = _gate(session, "knowledge", key)
-        if g == "stop":
+        action = _take(session, "knowledge", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = _ask_mc(client, item["question"], item["texts"], max_tokens=mt)
         pred = out["pred"]
@@ -180,11 +214,10 @@ def run_knowledge(
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
     for i, item in select_indexed_by_indices(read_jsonl("tiny_hellaswag.jsonl"), hellaswag_limit, KNOWLEDGE_CHALLENGE_INDICES["hellaswag"]):
         key = f"hellaswag:{i}"
-        g = _gate(session, "knowledge", key)
-        if g == "stop":
+        action = _take(session, "knowledge", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = _ask_mc(client, item["ctx"] + "\n\nWhich ending is best?", item["endings"], max_tokens=mt)
         pred = out["pred"]
@@ -192,11 +225,10 @@ def run_knowledge(
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
     for i, item in select_indexed_by_indices(read_jsonl("tiny_winogrande.jsonl"), winogrande_limit, KNOWLEDGE_CHALLENGE_INDICES["winogrande"]):
         key = f"winogrande:{i}"
-        g = _gate(session, "knowledge", key)
-        if g == "stop":
+        action = _take(session, "knowledge", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         stem = item["sentence"].replace("_", "_____")
         out = _ask_mc(client, stem, [item["option1"], item["option2"]], max_tokens=mt)
@@ -216,11 +248,10 @@ def run_math(
     rows = []
     for i, item in select_indexed_by_indices(read_jsonl("tiny_gsm8k.jsonl"), limit, MATH_CHALLENGE_INDICES):
         key = f"gsm:{i}"
-        g = _gate(session, "math", key)
-        if g == "stop":
+        action = _take(session, "math", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = client.complete(
             item["question"] + "\n\nEnd with #### <number> and nothing after.",
@@ -251,11 +282,10 @@ def run_truth(
     rows = []
     for i, item in select_indexed_by_indices(read_jsonl("tiny_truthfulqa.jsonl"), limit, TRUTH_CHALLENGE_INDICES):
         key = f"tqa:{i}"
-        g = _gate(session, "truth", key)
-        if g == "stop":
+        action = _take(session, "truth", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = _ask_mc(client, item["question"], item["choices"], max_tokens=mt)
         pred = out["pred"]
@@ -274,11 +304,10 @@ def run_instruct(
     rows = []
     for item in select_by_indices(read_jsonl("ifeval_100.jsonl"), limit, INSTRUCT_CHALLENGE_INDICES):
         key = f"ifeval:{item.get('key')}"
-        g = _gate(session, "instruct", key)
-        if g == "stop":
+        action = _take(session, "instruct", key, rows)
+        if action == "stop":
             return rows
-        if isinstance(g, dict):
-            rows.append(g)
+        if action == "skip":
             continue
         out = client.complete(item["prompt"], max_tokens=mt)
         text = out["text"] or ""
@@ -377,7 +406,7 @@ def run_battery(
     if skip_code_exec:
         overall_flags.append("code-exec-disabled")
     overall_value = overall_score(cats) if any(v is not None for v in cats.values()) else None
-    return {
+    result = {
         "model": client.model,
         "base_url": client.base_url,
         "request_timeout_seconds": getattr(client, "timeout", None),
@@ -405,6 +434,11 @@ def run_battery(
         "items": packs,
         "speed": suite_speed(packs),
     }
+    offer = continuation_offer(result)
+    if session is not None and (session.retry_mode or session.retry_keys or session.rescored):
+        offer.update(session.continuation_receipt())
+    result["continuation"] = offer
+    return result
 
 
 def render_table(result: dict) -> str:
@@ -476,6 +510,14 @@ def render_table(result: dict) -> str:
         lines.append(f"speed: {ctok_cell} ctok / {wall_cell}  suite_tps {suite_cell}  mean {mean_cell}")
     if result.get("timed_out"):
         lines.append("stopped: time limit")
+    continuation = result.get("continuation") or {}
+    if continuation.get("remaining") or continuation.get("failed"):
+        lines.append(
+            "continuation: "
+            f"remaining={continuation.get('remaining', 0)} "
+            f"failed={continuation.get('failed', 0)} "
+            "merge with --retry remaining|failed|incomplete on the same --log/--out"
+        )
     if any_truncated:
         lines.append(
             "WARNING: at least one category has truncated completions (finish_reason=length) — "

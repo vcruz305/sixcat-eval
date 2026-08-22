@@ -13,6 +13,7 @@ def _read_rows(path: Path) -> tuple[list[dict[str, Any]], list[int], dict[str, A
     rows: list[dict[str, Any]] = []
     invalid_lines: list[int] = []
     run_identity: dict[str, Any] | None = None
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -40,9 +41,13 @@ def _read_rows(path: Path) -> tuple[list[dict[str, Any]], list[int], dict[str, A
                 else:
                     run_identity = candidate
                 continue
-            rows.append(item)
+            if "_sixcat_retry" in item:
+                continue
+            ident = (str(item.get("cat")), str(item.get("key") or item.get("id") or ""))
+            latest[ident] = item
         else:
             invalid_lines.append(index + 1)
+    rows = list(latest.values())
     return rows, invalid_lines, run_identity
 
 
@@ -83,6 +88,14 @@ def summarize_journal(path: str | Path) -> dict[str, Any]:
         "latest": latest,
         "elapsed_s": max(timestamps) - min(timestamps) if timestamps else None,
         "categories": category_counts,
+        "continuation": {
+            "failed": len(rows) - passed,
+            "failed_keys": [
+                f"{row.get('cat', '?')}/{row.get('key') or row.get('id') or '?'}"
+                for row in rows
+                if row.get("ok") is not True
+            ],
+        },
     }
 
 
@@ -108,6 +121,7 @@ def merge_final(summary: dict[str, Any], result_path: str | Path | None) -> dict
         "overall_flags": result.get("overall_flags"),
         "speed": result.get("speed"),
         "timed_out": result.get("timed_out"),
+        "continuation": result.get("continuation"),
     }
     return merged
 

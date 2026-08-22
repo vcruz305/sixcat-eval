@@ -27,6 +27,7 @@ class TimeBudget:
 
 class RunJournal:
     HEADER_KEY = "_sixcat_run"
+    RETRY_KEY = "_sixcat_retry"
 
     def __init__(self, path: Path, resume: bool = True, identity: dict[str, Any] | None = None):
         self.path = Path(path)
@@ -97,6 +98,8 @@ class RunJournal:
                         raise ValueError(f"journal {self.path} contains conflicting run identity headers")
                     self._loaded_identity = loaded
                     continue
+                if self.RETRY_KEY in rec:
+                    continue
                 cat = rec.get("cat")
                 key = rec.get("key")
                 if cat is None or key is None:
@@ -106,11 +109,20 @@ class RunJournal:
     def done_keys(self) -> set[tuple[str, str]]:
         return set(self._done)
 
+    def failed_keys(self) -> set[tuple[str, str]]:
+        return {ident for ident, rec in self._done.items() if rec.get("ok") is not True}
+
     def get(self, cat: str, key: str) -> dict[str, Any] | None:
         return self._done.get((cat, str(key)))
 
     def rows_for(self, cat: str) -> list[dict[str, Any]]:
         return [v for (c, _), v in self._done.items() if c == cat]
+
+    def append_event(self, rec: dict[str, Any]) -> None:
+        payload = dict(rec)
+        payload.setdefault("ts", time.time())
+        self._fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._fh.flush()
 
     def append(self, rec: dict[str, Any]) -> None:
         cat = str(rec["cat"])
@@ -136,21 +148,49 @@ class RunJournal:
 
 
 class Session:
-    def __init__(self, journal: RunJournal, budget: TimeBudget):
+    def __init__(
+        self,
+        journal: RunJournal,
+        budget: TimeBudget,
+        *,
+        retry_failed: bool = False,
+        include_remaining: bool = True,
+        retry_mode: str | None = None,
+    ):
         self.journal = journal
         self.budget = budget
         self.stopped = False
+        self.retry_failed = retry_failed
+        self.include_remaining = include_remaining
+        self.retry_mode = retry_mode
+        self.retry_keys = journal.failed_keys() if retry_failed else set()
+        self.rescored: set[tuple[str, str]] = set()
+        if self.retry_keys:
+            journal.append_event(
+                {
+                    journal.RETRY_KEY: {
+                        "mode": retry_mode or ("failed" if retry_failed else "remaining"),
+                        "keys": [f"{cat}/{key}" for cat, key in sorted(self.retry_keys)],
+                    }
+                }
+            )
 
     def begin(self, cat: str, key: str):
+        ident = (cat, str(key))
+        cached = self.journal.get(cat, str(key))
+        wants_retry = ident in self.retry_keys
         if self.budget.expired():
             if not self.stopped:
                 print(f"TIMEUP before {cat}/{key}", flush=True)
             self.stopped = True
-            return "stop"
-        cached = self.journal.get(cat, str(key))
+            return cached if cached is not None else "stop"
+        if wants_retry:
+            return None
         if cached:
             print(f"SKIP {cat}/{key}", flush=True)
             return cached
+        if not self.include_remaining:
+            return "omit"
         return None
 
     def finish(self, cat: str, key: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -159,6 +199,9 @@ class Session:
         rec["key"] = str(key)
         rec.setdefault("id", key)
         self.journal.append(rec)
+        ident = (cat, str(key))
+        if ident in self.retry_keys:
+            self.rescored.add(ident)
         mark = "PASS" if rec.get("ok") else "FAIL"
         bits = [f"{mark} {cat}/{key}"]
         if rec.get("pred") is not None:
@@ -168,11 +211,37 @@ class Session:
         print(" ".join(str(b) for b in bits), flush=True)
         return rec
 
+    def continuation_receipt(self) -> dict[str, Any]:
+        failed_kept = sorted(
+            f"{cat}/{key}" for cat, key in (self.retry_keys - self.rescored)
+        )
+        return {
+            "retry": self.retry_mode,
+            "merged": True,
+            "failed_requested": len(self.retry_keys),
+            "failed_rescored": len(self.rescored),
+            "failed_kept_previous": len(failed_kept),
+            "failed_kept_keys": failed_kept,
+        }
+
 
 def gate(session: Session | None, cat: str, key: str):
     if session is None:
         return None
     return session.begin(cat, key)
+
+
+def apply_item_gate(session: Session | None, cat: str, key: str, rows: list[dict[str, Any]]) -> str:
+    """Return 'run', 'skip', or 'stop' after applying cache/retry/time-budget rules."""
+    outcome = gate(session, cat, key)
+    if outcome == "stop":
+        return "stop"
+    if outcome == "omit":
+        return "skip"
+    if isinstance(outcome, dict):
+        rows.append(outcome)
+        return "skip"
+    return "run"
 
 
 def emit(session: Session | None, cat: str, key: str, row: dict[str, Any]) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.1
+version: 0.4.2
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -351,8 +351,22 @@ After process exit:
 
 A run with timeout, truncation, missing confidence, identity drift, duplicate
 rows, or a failed probe request is incomplete or non-comparable. Hidden or
-unrevealed thinking traces are not a probe failure. Keep the files, label the
-failure honestly, and ask before rerunning.
+unrevealed thinking traces are not a probe failure. Keep the files and label
+the failure honestly.
+
+If `timed_out` is true or `continuation.remaining` / `continuation.failed` is
+nonzero, immediately ask one option-only `clarify`. Do not suggest a full
+`--no-resume` rerun. Reuse the same `--out` and `--log`, omit `--no-resume`,
+and add one `--retry` flag so the new rows merge into the existing receipt:
+
+- **▶️ Continue remaining only (recommended after TIMEUP)** — `--retry remaining`
+- **🔁 Retry failed only** — `--retry failed`; keeps PASS rows and replaces FAIL
+  rows. Unscored remaining items stay unscored.
+- **🧩 Retry failed and remaining** — `--retry incomplete`
+- **📁 Leave this receipt as-is**
+
+Offer only the choices that apply. After that pass, report the merged overall
+from the rewritten JSON, including `continuation.failed_rescored`.
 
 ## Additional Guardrails
 
@@ -373,6 +387,8 @@ failure honestly, and ask before rerunning.
 - **No invented speed split.** Wall TPS is universal; provider split is optional.
 - **No stale-port scoring.** Identity guard before and after every run.
 - **No destructive server control.** This skill never kills or rebinds a process.
+- **No full rerun after TIMEUP.** Offer `--retry remaining|failed|incomplete` on
+  the same journal so leftover or failed items merge into one receipt.
 
 ## Verification
 
@@ -387,4 +403,6 @@ The skill is working when:
 - the background process is tracked by a Hermes process session ID;
 - the JSONL live status is re-readable while the run is active;
 - the final model identity matches preflight;
-- the result JSON is self-auditing and all warnings are surfaced.
+- the result JSON is self-auditing and all warnings are surfaced;
+- a timed-out or incomplete run asked to merge remaining/failed items instead of
+  suggesting a full rerun.
