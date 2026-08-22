@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 TOOLS = [
@@ -69,26 +70,26 @@ TOOLS = [
 ]
 
 ITEMS = [
-    ("list /tmp", "list_dir", "List the files in /tmp. Use a tool."),
-    ("list .", "list_dir", "Show me what is in the current directory. Use a tool."),
-    ("read readme", "read_file", "Read the file README.md using a tool."),
-    ("read cfg", "read_file", "Open data/config.yaml and show it. Use a tool."),
-    ("search weather", "search", "Search for today's weather in Miami. Use a tool."),
-    ("search rust", "search", "Look up the Rust programming language. Use a tool."),
-    ("add 2 3", "add", "What is 2 plus 3? Use the add tool, do not compute yourself."),
-    ("add 10 15", "add", "Add 10 and 15 with the add tool."),
-    ("write note", "write_file", "Write hello to notes.txt using a tool."),
-    ("write log", "write_file", "Create /tmp/out.log containing ok. Use a tool."),
-    ("list home", "list_dir", "List files under /home. Use a tool, do not guess."),
-    ("read /etc/hosts", "read_file", "Read /etc/hosts with a tool."),
-    ("search eval", "search", "Search for IFEval instruction following. Use a tool."),
-    ("add 100 1", "add", "Use the add tool for 100+1."),
-    ("write foo", "write_file", "Write foo to foo.txt via write_file."),
-    ("no-tool math", None, "What is 7 times 8? Answer with just the number. Do not call a tool."),
-    ("no-tool capital", None, "What is the capital of France? One word. Do not call a tool."),
-    ("search vs list", "search", "Find papers about MixEval. Use search, not list_dir."),
-    ("read not list", "read_file", "I need the contents of LICENSE. Read the file, do not list a directory."),
-    ("add not search", "add", "Compute 19+23 with the add tool, not search."),
+    ("two exact adds", [("add", {"a": 19, "b": 23}), ("add", {"a": 100, "b": 1})], "Call add exactly twice, in this order: first 19+23, then 100+1. Do not answer directly."),
+    ("exact multiline write", [("write_file", {"path": "reports/run note.txt", "content": "alpha\nbeta: 2"})], "Use write_file once. Path must be 'reports/run note.txt' and content must be exactly two lines: alpha, then beta: 2."),
+    ("confusable exact read", [("read_file", {"path": "data/archive 2026/config.yaml"})], "Read the contents of data/archive 2026/config.yaml. Do not list its directory and do not search for it."),
+    ("exact quoted search", [("search", {"query": "HumanEval+ edge case failures"})], "Use search with the exact query: HumanEval+ edge case failures"),
+    ("read license distractors", [("read_file", {"path": "LICENSE"})], "The words search and list_dir are distractors. Use read_file to read LICENSE."),
+    ("search not filesystem", [("search", {"query": "MixEval benchmark paper"})], "Find the MixEval benchmark paper using search. Do not call list_dir or read_file."),
+    ("exact hidden list", [("list_dir", {"path": ".github/workflows"})], "List .github/workflows exactly; do not read any file."),
+    ("write json literal", [("write_file", {"path": "out/result.json", "content": "{\"ok\":true,\"n\":3}"})], "Write the exact compact JSON {\"ok\":true,\"n\":3} to out/result.json using write_file."),
+    ("decimal add", [("add", {"a": -2.5, "b": 7.75})], "Use add for -2.5 plus 7.75. Do not calculate it yourself."),
+    ("two exact reads", [("read_file", {"path": "README.md"}), ("read_file", {"path": "LICENSE"})], "Call read_file twice in order: README.md, then LICENSE."),
+    ("no-tool math", None, "What is 7 times 8? Answer with just the number. Do not call any tool, even add."),
+    ("no-tool capital", None, "What is the capital of France? One word. Do not call search."),
+    ("no-tool explain", None, "In five words, explain what a directory is. Do not call list_dir."),
+    ("read cfg", [("read_file", {"path": "data/config.yaml"})], "Open data/config.yaml with read_file and no other tool."),
+    ("list home", [("list_dir", {"path": "/home"})], "List files under /home. Use list_dir, do not guess."),
+    ("search weather", [("search", {"query": "today's weather in Miami"})], "Search using the exact query today's weather in Miami."),
+    ("write trailing newline", [("write_file", {"path": "notes.txt", "content": "hello\n"})], "Write hello followed by one newline to notes.txt."),
+    ("negative add", [("add", {"a": -19, "b": -23})], "Use add to combine negative nineteen and negative twenty-three."),
+    ("read readme", [("read_file", {"path": "README.md"})], "Read README.md using exactly one tool call."),
+    ("list current", [("list_dir", {"path": "."})], "List the current directory using path '.'."),
 ]
 
 
@@ -100,6 +101,31 @@ def _first_name(tool_calls: list[Any]) -> str | None:
         fn = tc.get("function") or {}
         return fn.get("name")
     return None
+
+
+def _normalise_calls(tool_calls: list[Any]) -> list[tuple[str | None, Any]]:
+    normalised = []
+    for tool_call in tool_calls or []:
+        function = tool_call.get("function") if isinstance(tool_call, dict) else None
+        function = function if isinstance(function, dict) else {}
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                pass
+        normalised.append((function.get("name"), arguments))
+    return normalised
+
+
+def _tool_answer_ok(want: Any, tool_calls: list[Any], text: str) -> tuple[bool, Any]:
+    calls = _normalise_calls(tool_calls)
+    if want is None:
+        return not calls and bool(text.strip()), calls or text[:80]
+    if isinstance(want, str):
+        return bool(calls) and calls[0][0] == want, calls[0][0] if calls else None
+    expected = [(name, arguments) for name, arguments in want]
+    return calls == expected, calls
 
 
 def run_tools(client, limit: int | None, session=None, max_tokens: int | None = None) -> list[dict]:
@@ -117,11 +143,7 @@ def run_tools(client, limit: int | None, session=None, max_tokens: int | None = 
             rows.append(g)
             continue
         out = client.complete(prompt, max_tokens=mt, tools=TOOLS)
-        called = _first_name(out["tool_calls"])
-        if want is None:
-            ok = called is None and bool((out["text"] or "").strip())
-        else:
-            ok = called == want
+        ok, pred = _tool_answer_ok(want, out["tool_calls"], out["text"] or "")
         usage = out.get("usage") or {}
         rows.append(
             emit(
@@ -130,7 +152,7 @@ def run_tools(client, limit: int | None, session=None, max_tokens: int | None = 
                 key,
                 {
                     "ok": ok,
-                    "pred": called or (out["text"] or "")[:80],
+                    "pred": pred,
                     "gold": want,
                     "raw_text": out["text"] or "",
                     "reasoning_content": out.get("reasoning_content") or "",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,16 +51,186 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "live status",
         "policy fingerprint",
         "identity guard",
-        "parser identity: `v3`",
+        "parser identity: `v4`",
         "broadcast one credential",
         "host-guarded",
         "skip-code-exec",
         "not a security sandbox",
+        "Thinking on (recommended when supported)",
         "Do not start, stop, or replace",
     ):
         assert required.casefold() in body.casefold()
     assert "C:/Users/" not in content
     assert "/home/" not in content
+
+
+def test_skill_asks_for_target_before_endpoint_detection_and_recommends_current_model():
+    content = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    body = content.split("\n---\n", 1)[1]
+
+    target_question = "model I am currently running"
+    assert target_question.casefold() in body.casefold()
+    assert body.casefold().index(target_question.casefold()) < body.casefold().index("detect the endpoint")
+    assert "current Hermes session model (recommended)".casefold() in body.casefold()
+    assert "another Hermes profile".casefold() in body.casefold()
+    assert "alternate OpenAI-compatible endpoint".casefold() in body.casefold()
+    assert "agent facade".casefold() in body.casefold()
+    assert "raw model".casefold() in body.casefold()
+
+
+def test_skill_questions_have_plain_english_explainers_distinct_emojis_and_custom_sampling():
+    content = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    body = content.split("\n---\n", 1)[1]
+
+    for emoji in ("🧠", "👤", "🔌", "🎛️", "🧊", "🏷️", "🔬", "⚖️", "⚡", "🧭", "🛠️", "🧪", "🛡️", "🚫"):
+        assert emoji in body
+    for explainer in (
+        "20 scored items per category",
+        "about 120 scored rows total",
+        "temperature controls randomness",
+        "top-p, top-k, and min-p filter",
+        "thinking controls whether",
+        "seed helps repeat",
+        "some endpoints ignore it",
+        "vendor-recommended temperature/settings",
+        "unknown or stealth model",
+        "custom sampling",
+        "not a security sandbox",
+    ):
+        assert explainer.casefold() in body.casefold()
+    assert "Do not offer Both when no reviewed vendor mapping exists".casefold() in body.casefold()
+    assert "Items per dataset".casefold() not in body.casefold()
+
+
+def test_hermes_runner_proxy_forwards_sampling_tools_and_exact_runtime_identity():
+    runner = _load_script("hermes_runner.py")
+    target = runner.HermesRuntimeTarget(
+        profile="xavier",
+        model="gpt-5.6-sol",
+        provider="openai-codex",
+        runtime={
+            "api_key": "SUPER-SECRET",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "api_mode": "codex_responses",
+        },
+    )
+    calls = []
+
+    def fake_call_llm(**kwargs):
+        calls.append(kwargs)
+        kwargs["route_info"].update({"provider": "openai-codex", "model": "gpt-5.6-sol"})
+        message = SimpleNamespace(
+            content="B",
+            reasoning_content="checked",
+            tool_calls=[
+                SimpleNamespace(
+                    id="call_1",
+                    type="function",
+                    function=SimpleNamespace(name="read_file", arguments='{"path":"README.md"}'),
+                )
+            ],
+        )
+        return SimpleNamespace(
+            id="chatcmpl-fixture",
+            model="gpt-5.6-sol",
+            choices=[SimpleNamespace(index=0, message=message, finish_reason="tool_calls")],
+            usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7, total_tokens=18),
+        )
+
+    from sixcat.client import ChatClient
+    from sixcat.policy import Policy
+
+    policy = Policy(
+        name="vendor",
+        temperature=0.6,
+        top_p=0.95,
+        top_k=20,
+        min_p=0.0,
+        thinking=True,
+        budgets={"knowledge": 768},
+        extra={"seed": 1, "presence_penalty": 0.0},
+        source="fixture",
+    )
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}]
+
+    with runner.proxy_server(target, call_llm_fn=fake_call_llm) as proxy:
+        out = ChatClient(
+            proxy.base_url,
+            target.model,
+            policy,
+            api_key=proxy.api_key,
+        ).complete("Choose B", max_tokens=321, tools=tools)
+
+    assert out["text"] == "B"
+    assert out["reasoning_content"] == "checked"
+    assert out["finish"] == "tool_calls"
+    assert out["usage"] == {"prompt_tokens": 11, "completion_tokens": 7}
+    assert out["tool_calls"][0]["function"]["name"] == "read_file"
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["provider"] == "openai-codex"
+    assert call["model"] == "gpt-5.6-sol"
+    assert call["temperature"] == 0.6
+    assert call["max_tokens"] == 321
+    assert call["tools"] == tools
+    assert call["reasoning_config"] == {"enabled": True}
+    assert call["extra_body"] == {
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "seed": 1,
+        "presence_penalty": 0.0,
+        "chat_template_kwargs": {"enable_thinking": True},
+    }
+
+
+def test_hermes_runner_public_receipt_never_exposes_runtime_credentials():
+    runner = _load_script("hermes_runner.py")
+    secret = "SUPER-SECRET-RUNTIME-TOKEN"
+    target = runner.HermesRuntimeTarget(
+        profile="xavier",
+        model="gpt-5.6-sol",
+        provider="openai-codex",
+        runtime={
+            "api_key": secret,
+            "credential_pool": object(),
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "api_mode": "codex_responses",
+        },
+    )
+
+    receipt = runner.public_target_receipt(target)
+
+    assert receipt == {
+        "status": "ready",
+        "target_kind": "hermes_runtime_model",
+        "profile": "xavier",
+        "model": "gpt-5.6-sol",
+        "provider": "openai-codex",
+        "api_mode": "codex_responses",
+        "auth": "resolved",
+    }
+    assert secret not in json.dumps(receipt)
+
+
+def test_hermes_runner_finds_checkout_from_env_when_installed_outside_repo(monkeypatch, tmp_path: Path):
+    runner = _load_script("hermes_runner.py")
+    installed_script = tmp_path / "profiles" / "xavier" / "skills" / "sixcat-eval" / "scripts" / "runner.py"
+    monkeypatch.setenv("SIXCAT_PROJECT_ROOT", str(ROOT))
+    monkeypatch.chdir(tmp_path)
+
+    assert runner.find_project_root(script_path=installed_script) == ROOT
+
+
+def test_hermes_runner_rejects_silent_provider_or_model_fallback():
+    runner = _load_script("hermes_runner.py")
+
+    with pytest.raises(RuntimeError, match="identity drift"):
+        runner.require_exact_route(
+            {"provider": "openrouter", "model": "other-model"},
+            expected_provider="openai-codex",
+            expected_model="gpt-5.6-sol",
+        )
 
 
 def test_preflight_normalizes_endpoint_and_previews_reviewed_policy():

@@ -11,8 +11,8 @@ from .score import CATEGORIES
 
 
 RESULT_SCHEMA = "sixcat-v2"
-PARSER_VERSION = "v3"
-READABLE_PARSER_VERSIONS = frozenset({"v2", PARSER_VERSION})
+PARSER_VERSION = "v4"
+READABLE_PARSER_VERSIONS = frozenset({"v2", "v3", PARSER_VERSION})
 
 
 class ResultFormatError(ValueError):
@@ -406,6 +406,9 @@ def _run_scope_mismatches(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[st
         mismatches.append(f"parser A={a.get('parser')!r} B={b.get('parser')!r}")
     if ("limit" in a) != ("limit" in b) or a.get("limit") != b.get("limit"):
         mismatches.append(f"limit A={a.get('limit')!r} B={b.get('limit')!r}")
+    for field in ("limit_scope", "selection_profile", "selection_fingerprint"):
+        if (field in a) != (field in b) or a.get(field) != b.get(field):
+            mismatches.append(f"{field} A={a.get(field)!r} B={b.get(field)!r}")
     if ("code_execution" in a) != ("code_execution" in b) or a.get("code_execution") != b.get("code_execution"):
         mismatches.append(
             f"code_execution A={a.get('code_execution')!r} B={b.get('code_execution')!r}"

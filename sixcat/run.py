@@ -5,7 +5,7 @@ from typing import Any
 
 from .client import ChatClient, fetch_server_props
 from .code import run_code
-from .dataio import read_jsonl, take
+from .dataio import read_jsonl
 from .instruct import item_ok
 from .journal import Session, emit, gate
 from .policy import STRICT_BUDGETS, probe_policy
@@ -21,6 +21,16 @@ from .score import (
     suite_speed,
 )
 from .tools import run_tools
+from .selection import (
+    INSTRUCT_CHALLENGE_INDICES,
+    KNOWLEDGE_CHALLENGE_INDICES,
+    MATH_CHALLENGE_INDICES,
+    SELECTION_FINGERPRINT,
+    SELECTION_PROFILE,
+    TRUTH_CHALLENGE_INDICES,
+    select_by_indices,
+    select_indexed_by_indices,
+)
 
 # Phase 3 (sixcat v2.1, B3): right-sized from Phase 1's own measured truncation, not
 # guessed. At the old defaults (knowledge/truth=32, math=256, instruct=400, code=512,
@@ -32,6 +42,18 @@ from .tools import run_tools
 DEFAULT_BUDGETS = STRICT_BUDGETS
 
 LETTERS = "ABCDEFGHIJKLMNOP"
+
+
+def split_category_limit(limit: int | None, dataset_count: int) -> list[int | None]:
+    """Split one category cap fairly across its component datasets."""
+    if dataset_count <= 0:
+        raise ValueError("dataset_count must be positive")
+    if limit is None:
+        return [None] * dataset_count
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    base, remainder = divmod(limit, dataset_count)
+    return [base + (1 if index < remainder else 0) for index in range(dataset_count)]
 
 
 def choice_letter(i: int) -> str:
@@ -131,7 +153,8 @@ def run_knowledge(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("knowledge", DEFAULT_BUDGETS["knowledge"])
     rows: list[dict] = []
-    for i, item in enumerate(take(read_jsonl("tiny_mmlu.jsonl"), limit)):
+    mmlu_limit, arc_limit, hellaswag_limit, winogrande_limit = split_category_limit(limit, 4)
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_mmlu.jsonl"), mmlu_limit, KNOWLEDGE_CHALLENGE_INDICES["mmlu"]):
         key = f"mmlu:{i}"
         g = _gate(session, "knowledge", key)
         if g == "stop":
@@ -143,7 +166,7 @@ def run_knowledge(
         pred = out["pred"]
         gold = choice_letter(int(item["answer"]))
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
-    for i, item in enumerate(take(read_jsonl("tiny_arc.jsonl"), limit)):
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_arc.jsonl"), arc_limit, KNOWLEDGE_CHALLENGE_INDICES["arc"]):
         key = f"arc:{i}"
         g = _gate(session, "knowledge", key)
         if g == "stop":
@@ -155,7 +178,7 @@ def run_knowledge(
         pred = out["pred"]
         gold = arc_answer_letter(item)
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
-    for i, item in enumerate(take(read_jsonl("tiny_hellaswag.jsonl"), limit)):
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_hellaswag.jsonl"), hellaswag_limit, KNOWLEDGE_CHALLENGE_INDICES["hellaswag"]):
         key = f"hellaswag:{i}"
         g = _gate(session, "knowledge", key)
         if g == "stop":
@@ -167,7 +190,7 @@ def run_knowledge(
         pred = out["pred"]
         gold = choice_letter(int(item["answer"]))
         rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
-    for i, item in enumerate(take(read_jsonl("tiny_winogrande.jsonl"), limit)):
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_winogrande.jsonl"), winogrande_limit, KNOWLEDGE_CHALLENGE_INDICES["winogrande"]):
         key = f"winogrande:{i}"
         g = _gate(session, "knowledge", key)
         if g == "stop":
@@ -191,7 +214,7 @@ def run_math(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("math", DEFAULT_BUDGETS["math"])
     rows = []
-    for i, item in enumerate(take(read_jsonl("tiny_gsm8k.jsonl"), limit)):
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_gsm8k.jsonl"), limit, MATH_CHALLENGE_INDICES):
         key = f"gsm:{i}"
         g = _gate(session, "math", key)
         if g == "stop":
@@ -226,7 +249,7 @@ def run_truth(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("truth", DEFAULT_BUDGETS["truth"])
     rows = []
-    for i, item in enumerate(take(read_jsonl("tiny_truthfulqa.jsonl"), limit)):
+    for i, item in select_indexed_by_indices(read_jsonl("tiny_truthfulqa.jsonl"), limit, TRUTH_CHALLENGE_INDICES):
         key = f"tqa:{i}"
         g = _gate(session, "truth", key)
         if g == "stop":
@@ -249,7 +272,7 @@ def run_instruct(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("instruct", DEFAULT_BUDGETS["instruct"])
     rows = []
-    for item in take(read_jsonl("ifeval_100.jsonl"), limit):
+    for item in select_by_indices(read_jsonl("ifeval_100.jsonl"), limit, INSTRUCT_CHALLENGE_INDICES):
         key = f"ifeval:{item.get('key')}"
         g = _gate(session, "instruct", key)
         if g == "stop":
@@ -369,6 +392,9 @@ def run_battery(
         "code_execution": code_execution,
         "result_schema": RESULT_SCHEMA,
         "limit": limit,
+        "limit_scope": "per_category",
+        "selection_profile": SELECTION_PROFILE,
+        "selection_fingerprint": SELECTION_FINGERPRINT,
         "timed_out": timed_out,
         "categories": cats,
         "stats": stats,

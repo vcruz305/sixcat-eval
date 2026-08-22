@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.1.0
+version: 0.4.0
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -14,9 +14,10 @@ metadata:
 
 # Sixcat Conversational Operator
 
-Run Sixcat against an already-running OpenAI-compatible model server. Detect the
-served model, preview the exact reviewed sampling policy, ask the user how large
-a run they want, keep the run observable, and report only from saved receipts.
+Run Sixcat against either the exact model backing the current Hermes session or
+an alternate OpenAI-compatible endpoint. Ask for the target first, preview the
+exact reviewed sampling policy, keep the run observable, and report only from
+saved receipts.
 
 ## When to Use
 
@@ -25,15 +26,18 @@ a run they want, keep the run observable, and report only from saved receipts.
 - The user asks for live status from an existing Sixcat JSONL journal.
 
 Do not use this skill to launch, kill, swap, download, or quantize a model.
-Do not start, stop, or replace any model server; evaluate the endpoint already
-selected by the user. If no endpoint is reachable, report that prerequisite.
+Hermes-runtime mode may create a short-lived loopback proxy owned by the tracked
+Sixcat process; it must close in `finally`. Do not start, stop, or replace the
+actual model server. If no target is reachable, report that prerequisite.
 
 ## Prerequisites
 
 - Start Hermes inside the Sixcat git checkout.
 - Trust its project skills once with `hermes skills trust` from the project root.
 - Python 3.11+ and the repository dependencies must be available.
-- The target server must expose `/v1/models` and `/v1/chat/completions`.
+- An alternate target server must expose `/v1/models` and `/v1/chat/completions`.
+- Hermes-runtime mode requires a resolvable profile model/provider and its
+  existing provider authentication. The runner never prints those credentials.
 - For an authenticated endpoint, keep the key in `SIXCAT_API_KEY`; never print it.
 - An API key requires exactly one explicit `SIXCAT_BASE_URL` or `--base-url`; the
   preflight refuses to broadcast one credential across discovery candidates.
@@ -42,16 +46,63 @@ selected by the user. If no endpoint is reachable, report that prerequisite.
 
 ## Quick Reference
 
-- Default Sixcat run: `--limit 20 --max-minutes 30`.
-- Current scorer/parser identity: `v3`; older `v2` receipts are non-comparable.
-- Vendor default seed: `1`; omit `--seed` unless the user requests an override.
+- Standard run: `--limit 20 --max-minutes 30` means **20 scored items per
+  category**, about 120 scored rows total. It never means 20 per source dataset.
+- Current scorer/parser identity: `v4`; older `v2`/`v3` receipts are readable
+  but non-comparable to new challenge-selection/tool-grader runs.
+- Vendor-recommended temperature/settings use seed `1` for repeatability when a
+  reviewed model mapping exists. Custom mode may use any integer or no seed.
 - New run: use `--no-resume` and a fresh artifact basename.
 - Live status: summarize the JSONL with the bundled status helper.
 - Completion: require a final JSON result plus a zero process exit code.
 
 ## Procedure
 
-### 1. Detect the endpoint and model
+### 1. Ask which target to evaluate
+
+Before probing any endpoint, ask exactly:
+
+> 🎯 Do you want to run Sixcat against the model I am currently running,
+> another Hermes profile, or an alternate OpenAI-compatible endpoint?
+
+Use one `clarify` question. Each choice must include its mini-explainer:
+
+1. **🧠 Current Hermes session model (recommended)** — evaluate the exact model
+   and provider powering this conversation through the clean raw-model bridge;
+   do not include this agent's persona, tools, memory, or conversation.
+2. **👤 Another Hermes profile** — evaluate that profile's configured default
+   model using the authentication already stored for that profile.
+3. **🔌 Alternate OpenAI-compatible endpoint** — evaluate an already-running
+   `/v1/chat/completions` server selected through its `/v1/models` identity.
+
+Do not silently choose a localhost model server. The default recommendation is
+the current caller's exact live model and provider, including a session `/model`
+override. Do not substitute the profile's configured default after a session
+model switch.
+
+For the current session, inspect the exact runtime without exposing credentials:
+
+```text
+terminal(
+  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" inspect --profile current --runtime-model <live-model> --runtime-provider <live-provider> --json',
+  workdir='<project-root>'
+)
+```
+
+The live model/provider come from the current Hermes runtime metadata. For
+another profile, ask which profile, then omit the two `--runtime-*` arguments so
+the runner resolves that profile's configured model/provider.
+
+Hermes' normal API server is an **agent facade**: it adds the profile prompt,
+tools, memory, and agent loop, and its `/v1/models` entry is a profile alias.
+That is useful for apps but is not a raw model benchmark. The bundled runner
+instead uses Hermes' provider/auth resolver and a temporary authenticated
+loopback proxy to call the exact raw model with Sixcat's sampling parameters.
+
+Completion criterion: target kind, profile when applicable, exact model, and
+exact provider are explicit before policy/scope questions.
+
+### 2. Detect the endpoint and model
 
 Run the bundled preflight through `terminal` from the project root:
 
@@ -62,9 +113,10 @@ terminal(
 )
 ```
 
-If the user named an endpoint or model, pass `--base-url <url>` and an exact
+For **Alternate OpenAI-compatible endpoint**, run the bundled preflight. If the
+user named an endpoint or model, pass `--base-url <url>` and an exact
 `--model <id>`. The helper checks `/v1/models`; it does not trust a filename,
-Hermes chat-model label, old journal, or user-facing server nickname.
+old journal, or user-facing server nickname.
 
 If `SIXCAT_API_KEY` is set, require one explicit endpoint before preflight. Never
 send that credential while scanning the default candidate list.
@@ -73,50 +125,116 @@ If multiple endpoints or models are found, use `clarify` when available and ask
 the user to choose. Never pick the first one silently. Completion criterion:
 one base URL and one exact model ID are selected.
 
-### 2. Preview what will run
+For a Hermes runtime target, the `inspect` receipt replaces endpoint discovery.
+It must say `target_kind=hermes_runtime_model`, show the exact profile/model/
+provider, report `auth=resolved`, and state that the agent facade is bypassed.
 
-Before asking for run size, show:
+### 3. Preview what will run
 
-- exact endpoint and detected model ID;
-- recommended policy (`vendor` when a reviewed family matches, otherwise `strict`);
-- temperature, top-p, top-k, min-p, thinking state, seed, and category budgets;
-- cited policy source and policy fingerprint;
-- every fallback or ambiguity warning.
+Before asking for run size, show the exact target, the resolved settings, and a
+plain-English explanation. Never show only internal words like `vendor`,
+`strict`, or `seed` and expect the user to know what they mean:
 
-A request for `vendor` that resolves to `strict` is a fallback, not a vendor
-receipt. Say so plainly. Never infer a temperature from model size or vendor
-name when the catalog has no verified row.
+- **Temperature controls randomness**: `0` is the most repeatable; higher values
+  allow more varied answers.
+- **Top-p, top-k, and min-p filter** which next-token choices remain available.
+  `none` means Sixcat does not send that control.
+- **Thinking controls whether** the endpoint is asked to expose a reasoning trace.
+- **Seed helps repeat** the same sampling path when the endpoint supports seeds;
+  **some endpoints ignore it**, so it is not a universal reproducibility promise.
+- Show category token budgets, cited settings source, policy fingerprint, and every
+  fallback or ambiguity warning.
 
-### 3. Ask policy and run size
+A request for internal `--policy vendor` that resolves to strict is a fallback,
+not a vendor-recommended receipt. Never infer settings from model size or vendor
+name when the catalog has no reviewed row.
 
-After detection, ask the user to choose the policy. Recommend the resolved
-vendor policy first when it exists:
+### 4. Ask sampling setup, run size, code handling, and thinking
 
-- **Vendor**: reviewed model-card settings and seed 1.
-- **Both**: strict first, then vendor, separate journals/results and a delta.
-- **Strict**: temperature 0, thinking off.
+Use one batched `clarify` form with four independently answerable questions.
+Prefix every question and every choice with the distinct emoji shown below.
 
-Then ask for one run scope. Put the default first:
+#### A. 🎛️ How should the model sample answers?
 
-- **Standard**: `--limit 20 --max-minutes 30` (recommended default).
-- **Quick**: `--limit 3 --max-minutes 10` for a plumbing smoke.
-- **Full**: `--full --max-minutes 0`; warn that it can exceed an hour.
-- **Custom**: ask for both item limit and wall-clock minutes. `0` minutes means no cap.
+When a reviewed mapping exists, offer:
 
-Also ask how to handle HumanEval:
+- **🏷️ Vendor-recommended temperature/settings (recommended)** — use the
+  reviewed model-card temperature and token filters; Sixcat uses seed `1` so
+  repeated runs are easier to compare. Thinking is selected separately below.
+- **🔬 Compare baseline vs vendor settings** — run the deterministic baseline
+  first, then the vendor-recommended settings, with separate receipts and a delta.
+- **🧊 Deterministic temperature baseline** — temperature `0` and no seed unless
+  the user explicitly supplies one. Thinking is selected separately below.
+- **🎛️ Custom sampling** — the user chooses temperature and any optional controls.
 
-- **Host-guarded** (recommended default): short-lived host subprocess with `-I -S`,
-  sanitized environment, temp working directory, timeout, AST escape checks,
-  restricted builtins/imports, and a harness-owned randomized success receipt.
-  State clearly that this is low overhead but **not a security sandbox**.
-- **Skip Code**: add `--skip-code-exec`; Code is `n/a` and the overall is visibly
-  flagged `code-exec-disabled`.
+For an **unknown or stealth model**, there is no trustworthy model-card mapping.
+Offer **🎛️ Custom sampling** first as the recommendation, followed by
+**🧊 Deterministic baseline**. **Do not offer Both when no reviewed vendor mapping exists**;
+running strict twice with a different seed is not a meaningful comparison.
 
-Use one batched `clarify` form when all three questions are independent. If Custom is
-chosen, ask its numeric follow-up separately. Completion criterion: policy,
-limit/full mode, time cap, and code-execution mode are explicit.
+If Custom is selected, ask one open-ended follow-up using this fill-in template:
 
-### 4. Show the exact run receipt before execution
+```text
+temperature=0.7, top_p=none, top_k=none, min_p=none, seed=none
+```
+
+Explain that only `temperature` is required. Parse `none` as an omitted control
+and map the values to `--policy custom --temperature ...` plus optional
+`--top-p`, `--top-k`, `--min-p`, and `--seed` flags. Restate
+all resolved values before execution.
+
+#### B. 📏 How large should the evaluation be?
+
+- **⚖️ Standard (recommended)** — **20 scored items per category**, **about 120
+  scored rows total**, with a 30-minute wall-clock safety cap.
+- **⚡ Quick smoke** — 3 scored items per category, about 18 total, with a
+  10-minute cap; useful for checking plumbing, not ranking models.
+- **🧭 Full battery** — every shipped row (`--full --max-minutes 0`); warn that it
+  can exceed an hour and cost substantially more on hosted models.
+- **🛠️ Custom size** — ask for items **per category** and wall-clock minutes.
+  `0` minutes means no cap. The cap stops new rows but preserves partial receipts.
+
+The `--limit` value is always per category. Knowledge may draw from MMLU, ARC,
+HellaSwag, and WinoGrande, but those sources share the category cap; `--limit 20`
+must never become 80 Knowledge rows.
+
+Limited runs use frozen `challenge-v1` selection, not file prefixes: Quick starts
+with the hardest few items and Standard uses a hard/diverse 20. Code difficulty
+uses an independent 49-model HumanEval ranking; Full runs all 164 HumanEval tasks.
+Tools grade exact arguments, call count/order, multi-call requests, distractors,
+and abstention. Every receipt includes the selection profile and fingerprint;
+Full preserves the complete source corpus.
+
+#### C. 🧪 Should Sixcat execute generated HumanEval code?
+
+- **🛡️ Host-guarded HumanEval (recommended)** — execute generated Python in a
+  short-lived subprocess with `-I -S`, sanitized environment, temp directory,
+  timeout, AST escape checks, restricted builtins/imports, and a harness-owned
+  success receipt. This is low overhead but **not a security sandbox**.
+- **🚫 Skip generated-code execution** — add `--skip-code-exec`; Code becomes
+  `n/a` and the overall is visibly flagged `code-exec-disabled`.
+
+#### D. 🧠 Should reasoning/thinking be enabled?
+
+- **🧠 Thinking on (recommended when supported)** — lets a reasoning model use
+  its reasoning mode and automatically raises category token budgets. This is
+  the default recommendation for capable reasoning models because it measures
+  their stronger intended mode, but it can be slower and cost more.
+- **⚡ Thinking off** — faster, cheaper, and more broadly compatible; use it for
+  a latency-oriented baseline or when the endpoint cannot return a reasoning
+  trace.
+
+Choose **On** by default unless the inspected model/provider is known not to
+support reasoning traces. Sixcat's pre-run policy probe must fail closed before
+scoring if On was selected but the endpoint does not actually expose reasoning.
+Map the choice to `--thinking on|off` for every sampling mode, including strict,
+vendor-recommended, compare, and custom.
+
+If Custom sampling or Custom size is selected, ask its dependent follow-up only
+after the batch. Completion criterion: exact sampling values, explicit thinking
+choice, per-category item cap/full mode, wall cap, and code-execution mode are explicit.
+
+### 5. Show the exact run receipt before execution
 
 Choose fresh paths under `results/hermes/`, including a sanitized model ID and a
 timestamp. Restate the exact command, result path, journal path, detected model,
@@ -127,7 +245,7 @@ For a new run, include `--no-resume`. Resume only when the user explicitly asks
 and the endpoint model ID, policy fingerprint, budgets, code-execution mode, and prior journal all
 match. Never silently resume across model-server sessions.
 
-### 5. Start in the background
+### 6. Start in the background
 
 Check `process(action='list')` first. Do not launch a second Sixcat run against
 the same endpoint unless the user explicitly accepts contention and invalid speed
@@ -143,11 +261,28 @@ terminal(
 )
 ```
 
+For the current Hermes runtime model, use the runner instead. The command must
+not contain an API key:
+
+```text
+terminal(
+  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" run --profile current --runtime-model <live-model> --runtime-provider <live-provider> -- --policy <policy> <scope> <optional --skip-code-exec> --out <result> --log <journal> --no-resume',
+  workdir='<project-root>',
+  background=true,
+  notify_on_complete=true
+)
+```
+
+The runner owns the temporary proxy, injects its random bearer token only
+in-process, and shuts the proxy down on success, failure, timeout, or interrupt.
+It verifies the effective provider/model route after every call and fails on any
+fallback identity drift.
+
 Record the returned process session ID. Immediately probe `/v1/models` again.
 This identity guard must still return the same exact model ID; if it changed,
 stop treating the run as valid and tell the user before any retry.
 
-### 6. Give useful live status
+### 7. Give useful live status
 
 Announce the start with model, policy, scope, process session ID, and receipt
 paths. Use `process(action='poll')` for process output and the bundled helper for
@@ -175,15 +310,17 @@ there is enough observed progress to label it as a rough projection.
 
 If the user asks to stop, call `process(action='kill')`, preserve the JSONL, and
 report the run as cancelled/incomplete. Never delete a partial receipt; offer a
-verified resume only after the identity and policy checks in step 4 pass.
+verified resume only after the identity and policy checks in step 5 pass.
 
-### 7. Verify and report
+### 8. Verify and report
 
 After process exit:
 
 1. Confirm exit code zero with `process`.
 2. Confirm the expected final JSON exists and load it with `read_file`.
-3. Re-run preflight and confirm the endpoint still serves the same model ID.
+3. Re-run preflight for an alternate endpoint. For a Hermes runtime target,
+   confirm every request retained the exact profile/provider/model identity and
+   that the tracked runner exited, which also closes its loopback proxy.
 4. Report the labelled overall score, every category, row counts, policy source,
    policy fingerprint, budgets, parser version, code-execution mode, timeout state, truncations,
    loops, confidence flags, and wall TPS.
@@ -197,8 +334,12 @@ label the failure honestly, and ask before rerunning.
 
 ## Additional Guardrails
 
-- **Chat model is not target model.** Hermes may be reasoning with a cloud model
-  while Sixcat targets a local server. `/v1/models` is the target identity.
+- **Current model is the default target.** Ask first; never scan unrelated local
+  ports before offering the exact model backing the calling Hermes session.
+- **Agent API is not raw inference.** Do not score the normal Hermes API server
+  agent facade as if it were the underlying model. Use `hermes_runner.py`.
+- **No silent provider fallback.** Hermes-runtime mode checks the actual route
+  after every request and aborts on model/provider identity drift.
 - **One endpoint can expose several models.** Ask which exact ID to use.
 - **No silent parameter override.** Show resolved values before execution.
 - **No secret leakage.** Do not print environment variables or credential files.
@@ -210,7 +351,9 @@ label the failure honestly, and ask before rerunning.
 
 The skill is working when:
 
-- preflight returns `status=ready` with one endpoint, one model, and a policy fingerprint;
+- the target choice was asked before endpoint detection;
+- preflight returns `status=ready` for an alternate endpoint, or Hermes inspect
+  returns one exact profile/model/provider plus a policy fingerprint;
 - the user approved policy and scope after seeing exact sampling values;
 - the background process is tracked by a Hermes process session ID;
 - the JSONL live status is re-readable while the run is active;

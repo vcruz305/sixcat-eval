@@ -93,6 +93,71 @@ class TestScore(unittest.TestCase):
         self.assertEqual(rows[0]["pred"], "C")
         self.assertEqual(rows[0]["gold"], "C")
 
+    def test_knowledge_limit_is_total_for_category_not_repeated_per_dataset(self):
+        from unittest.mock import patch
+
+        from sixcat.run import run_knowledge
+
+        datasets = {
+            "tiny_mmlu.jsonl": [
+                {"question": f"mmlu {i}", "choices": ["yes", "no"], "answer": 0}
+                for i in range(20)
+            ],
+            "tiny_arc.jsonl": [
+                {
+                    "question": f"arc {i}",
+                    "texts": ["yes", "no"],
+                    "labels": ["A", "B"],
+                    "answer": "A",
+                }
+                for i in range(20)
+            ],
+            "tiny_hellaswag.jsonl": [
+                {"ctx": f"hellaswag {i}", "endings": ["yes", "no"], "answer": 0}
+                for i in range(20)
+            ],
+            "tiny_winogrande.jsonl": [
+                {
+                    "sentence": f"winogrande {i} _",
+                    "option1": "yes",
+                    "option2": "no",
+                    "answer": "1",
+                }
+                for i in range(20)
+            ],
+        }
+
+        prompts = []
+
+        class Client:
+            def complete(self, prompt, max_tokens):
+                prompts.append(prompt)
+                return {
+                    "text": "A",
+                    "finish": "stop",
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    "request_params": {"max_tokens": max_tokens},
+                }
+
+        with patch("sixcat.run.read_jsonl", side_effect=lambda name: datasets[name]):
+            rows = run_knowledge(Client(), limit=20)
+
+        self.assertEqual(len(rows), 20)
+        self.assertEqual(
+            {
+                "mmlu": sum(prompt.startswith("mmlu ") for prompt in prompts),
+                "arc": sum(prompt.startswith("arc ") for prompt in prompts),
+                "hellaswag": sum(prompt.startswith("hellaswag ") for prompt in prompts),
+                "winogrande": sum(prompt.startswith("winogrande ") for prompt in prompts),
+            },
+            {"mmlu": 5, "arc": 5, "hellaswag": 5, "winogrande": 5},
+        )
+
+    def test_small_knowledge_limit_still_spans_multiple_datasets(self):
+        from sixcat.run import split_category_limit
+
+        self.assertEqual(split_category_limit(3, 4), [1, 1, 1, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

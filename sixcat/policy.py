@@ -164,6 +164,54 @@ def strict_policy(
     )
 
 
+def custom_policy(
+    *,
+    temperature: float,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    thinking: bool = False,
+    seed: int | None = None,
+    budget_overrides: dict[str, int] | None = None,
+) -> Policy:
+    """Build an explicit user-selected sampling policy without hidden defaults."""
+    base_budgets = THINKING_BUDGETS if thinking else STRICT_BUDGETS
+    return Policy(
+        name="custom",
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        min_p=min_p,
+        thinking=thinking,
+        budgets={**base_budgets, **(budget_overrides or {})},
+        extra=_with_seed({}, seed),
+        source="user-custom",
+    )
+
+
+def override_thinking(policy: Policy, enabled: bool) -> Policy:
+    """Apply an explicit thinking choice while preserving sampling controls."""
+    source_defaults = THINKING_BUDGETS if policy.thinking else STRICT_BUDGETS
+    target_defaults = THINKING_BUDGETS if enabled else STRICT_BUDGETS
+    explicit_overrides = {
+        category: value
+        for category, value in policy.budgets.items()
+        if category not in source_defaults or value != source_defaults[category]
+    }
+    budgets = {**target_defaults, **explicit_overrides}
+    return Policy(
+        name=policy.name,
+        temperature=policy.temperature,
+        top_p=policy.top_p,
+        top_k=policy.top_k,
+        min_p=policy.min_p,
+        thinking=enabled,
+        budgets=budgets,
+        extra=policy.to_dict()["extra"],
+        source=f"{policy.source}|thinking={'on' if enabled else 'off'}:user",
+    )
+
+
 def _load_policy_entries(policy_file: Path | None) -> tuple[list[dict[str, Any]], str]:
     path = Path(policy_file) if policy_file is not None else DEFAULT_POLICY_FILE
     try:
@@ -274,6 +322,7 @@ def resolve_policy(
         source = (
             f"vendor:{entry['family']}|source={source_url}|reviewed={entry['reviewed_date']}"
         )
+        base_budgets = THINKING_BUDGETS if entry["thinking"] else STRICT_BUDGETS
         return Policy(
             name="vendor",
             temperature=entry["temperature"],
@@ -282,7 +331,7 @@ def resolve_policy(
             min_p=entry["min_p"],
             thinking=entry["thinking"],
             budgets={
-                **THINKING_BUDGETS,
+                **base_budgets,
                 **(entry.get("budgets") or {}),
                 **(budget_overrides or {}),
             },
