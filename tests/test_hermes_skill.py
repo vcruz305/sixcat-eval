@@ -68,6 +68,11 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "Check for a newer Sixcat release",
         "check_release.py",
         "Update to latest release",
+        "Never send a `clarify` that is only a question",
+        "Adopt a reviewed vendor family",
+        "sixcat families",
+        "--policy-family",
+        "now the setup form",
     ):
         assert required.casefold() in body.casefold()
     assert "C:/Users/" not in content

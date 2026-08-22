@@ -288,6 +288,185 @@ def _load_policy_entries(policy_file: Path | None) -> tuple[list[dict[str, Any]]
     return document["policies"], str(document.get("reviewed_date") or "unreviewed")
 
 
+_FAMILY_GROUP_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("qwen", ("qwen", "ornith")),
+    ("deepseek", ("deepseek",)),
+    ("glm", ("glm", "kimi")),
+)
+_TOKEN_RE = re.compile(r"[a-z]+|\d+")
+
+
+def family_from_source(source: str | None) -> str | None:
+    if not isinstance(source, str) or not source.startswith("vendor:"):
+        return None
+    family = source.split("|", 1)[0][7:].strip()
+    return family or None
+
+
+def family_group(family: str) -> str:
+    key = family.casefold()
+    for group, prefixes in _FAMILY_GROUP_PREFIXES:
+        if any(key.startswith(prefix) for prefix in prefixes):
+            return group
+    return "other"
+
+
+def _norm_tokens(text: str) -> set[str]:
+    return set(_TOKEN_RE.findall(text.casefold().replace("_", "-")))
+
+
+def _entry_matches_model(entry: dict[str, Any], model_key: str) -> bool:
+    patterns = entry.get("patterns") or []
+    exclude_patterns = entry.get("exclude_patterns") or []
+    required_patterns = entry.get("required_patterns") or []
+    if not entry.get("verified") or not any(str(pattern).casefold() in model_key for pattern in patterns):
+        return False
+    if required_patterns and not any(str(pattern).casefold() in model_key for pattern in required_patterns):
+        return False
+    if any(str(pattern).casefold() in model_key for pattern in exclude_patterns):
+        return False
+    required = ("family", "temperature", "top_p", "top_k", "thinking", "source_url")
+    return all(key in entry for key in required) and bool(entry.get("source_url"))
+
+
+def match_vendor_entry(model: str, policy_file: Path | None = None) -> dict[str, Any] | None:
+    entries, _ = _load_policy_entries(policy_file)
+    model_key = model.casefold()
+    for entry in entries:
+        if _entry_matches_model(entry, model_key):
+            return entry
+    return None
+
+
+def lookup_vendor_entry(family: str, policy_file: Path | None = None) -> dict[str, Any]:
+    wanted = family.strip().casefold()
+    if not wanted:
+        raise ValueError("vendor family cannot be empty")
+    entries, _ = _load_policy_entries(policy_file)
+    for entry in entries:
+        if str(entry.get("family") or "").casefold() == wanted:
+            return entry
+    known = ", ".join(str(entry["family"]) for entry in entries)
+    raise ValueError(f"unknown vendor family {family!r}; known families: {known}")
+
+
+def _vendor_policy_from_entry(
+    entry: dict[str, Any],
+    *,
+    model: str,
+    budget_overrides: dict[str, int] | None,
+    seed: int | None,
+    adopted: bool,
+) -> Policy:
+    source_url = entry["source_url"]
+    source = f"vendor:{entry['family']}|source={source_url}|reviewed={entry['reviewed_date']}"
+    if adopted:
+        source = (
+            f"vendor:{entry['family']}|adopted-for={model}"
+            f"|source={source_url}|reviewed={entry['reviewed_date']}"
+        )
+    base_budgets = THINKING_BUDGETS if entry["thinking"] else STRICT_BUDGETS
+    return Policy(
+        name="vendor",
+        temperature=entry["temperature"],
+        top_p=entry["top_p"],
+        top_k=entry["top_k"],
+        min_p=entry["min_p"],
+        thinking=entry["thinking"],
+        budgets={
+            **base_budgets,
+            **(entry.get("budgets") or {}),
+            **(budget_overrides or {}),
+        },
+        extra=_with_seed(entry.get("extra") or {}, seed, default=VENDOR_DEFAULT_SEED),
+        source=source,
+    )
+
+
+def summarize_vendor_family(entry: dict[str, Any]) -> dict[str, Any]:
+    thinking = "on" if entry["thinking"] else "off"
+    return {
+        "family": entry["family"],
+        "group": family_group(str(entry["family"])),
+        "temperature": entry["temperature"],
+        "top_p": entry["top_p"],
+        "top_k": entry["top_k"],
+        "min_p": entry["min_p"],
+        "thinking": entry["thinking"],
+        "extra": entry.get("extra") or {},
+        "source_url": entry["source_url"],
+        "source_note": entry.get("source_note") or "",
+        "reviewed_date": entry["reviewed_date"],
+        "label": (
+            f"{entry['family']} — temperature={entry['temperature']}, "
+            f"top_p={entry['top_p']}, thinking {thinking}"
+        ),
+    }
+
+
+def score_vendor_family(model: str, entry: dict[str, Any]) -> float:
+    model_key = model.casefold()
+    family = str(entry.get("family") or "")
+    score = 0.0
+    if family and family.casefold() in model_key:
+        score += 100.0
+    for pattern in entry.get("patterns") or []:
+        pat = str(pattern).casefold()
+        if pat and pat in model_key:
+            score += 80.0
+    if family.casefold().endswith(".x"):
+        prefix = family[:-2].casefold()
+        compact = re.sub(r"[^a-z0-9]", "", prefix)
+        model_compact = re.sub(r"[^a-z0-9]", "", model_key)
+        if prefix and prefix in model_key:
+            score += 70.0
+        if compact and compact in model_compact:
+            score += 50.0
+    haystack = _norm_tokens(family)
+    for pattern in entry.get("patterns") or []:
+        haystack.update(_norm_tokens(str(pattern)))
+    score += 8.0 * len(_norm_tokens(model) & haystack)
+    model_nums = [int(num) for num in re.findall(r"\d+", model_key)]
+    family_nums = [int(num) for num in re.findall(r"\d+", family)]
+    if model_nums and family_nums:
+        score += max(0.0, 20.0 - abs(model_nums[0] - family_nums[0]))
+    return score
+
+
+def vendor_family_catalog(
+    *,
+    model: str | None = None,
+    group: str | None = None,
+    policy_file: Path | None = None,
+) -> dict[str, Any]:
+    entries, reviewed = _load_policy_entries(policy_file)
+    families = [summarize_vendor_family(entry) for entry in entries]
+    mapping = None
+    suggested: list[dict[str, Any]] = []
+    if model:
+        matched = match_vendor_entry(model, policy_file)
+        if matched is not None:
+            mapping = summarize_vendor_family(matched)
+        ranked = sorted(
+            ((score_vendor_family(model, entry), summarize_vendor_family(entry)) for entry in entries),
+            key=lambda item: (-item[0], item[1]["family"]),
+        )
+        suggested = [{**summary, "score": score} for score, summary in ranked[:3] if score > 0]
+    if group:
+        wanted = group.strip().casefold()
+        families = [item for item in families if item["group"] == wanted]
+    groups: dict[str, list[str]] = {"qwen": [], "deepseek": [], "glm": [], "other": []}
+    for item in (summarize_vendor_family(entry) for entry in entries):
+        groups.setdefault(item["group"], []).append(item["family"])
+    return {
+        "reviewed_date": reviewed,
+        "mapping": mapping,
+        "suggested": suggested,
+        "families": families,
+        "groups": groups,
+    }
+
+
 def resolve_policy(
     name: str,
     model: str,
@@ -295,48 +474,31 @@ def resolve_policy(
     budget_overrides: dict[str, int] | None = None,
     seed: int | None = None,
     policy_file: Path | None = None,
+    family: str | None = None,
 ) -> Policy:
     if name == "strict":
         return strict_policy(budget_overrides, seed=seed)
     if name != "vendor":
         raise ValueError(f"unknown policy {name!r}")
 
-    entries, _ = _load_policy_entries(policy_file)
-    model_key = model.casefold()
-    for entry in entries:
-        patterns = entry.get("patterns") or []
-        exclude_patterns = entry.get("exclude_patterns") or []
-        required_patterns = entry.get("required_patterns") or []
-        if not entry.get("verified") or not any(str(pattern).casefold() in model_key for pattern in patterns):
-            continue
-        if required_patterns and not any(str(pattern).casefold() in model_key for pattern in required_patterns):
-            continue
-        if any(str(pattern).casefold() in model_key for pattern in exclude_patterns):
-            continue
-        source_url = entry.get("source_url")
-        if not source_url:
-            continue
-        required = ("family", "temperature", "top_p", "top_k", "thinking")
-        if any(key not in entry for key in required):
-            continue
-        source = (
-            f"vendor:{entry['family']}|source={source_url}|reviewed={entry['reviewed_date']}"
+    if family:
+        entry = lookup_vendor_entry(family, policy_file)
+        return _vendor_policy_from_entry(
+            entry,
+            model=model,
+            budget_overrides=budget_overrides,
+            seed=seed,
+            adopted=True,
         )
-        base_budgets = THINKING_BUDGETS if entry["thinking"] else STRICT_BUDGETS
-        return Policy(
-            name="vendor",
-            temperature=entry["temperature"],
-            top_p=entry["top_p"],
-            top_k=entry["top_k"],
-            min_p=entry["min_p"],
-            thinking=entry["thinking"],
-            budgets={
-                **base_budgets,
-                **(entry.get("budgets") or {}),
-                **(budget_overrides or {}),
-            },
-            extra=_with_seed(entry.get("extra") or {}, seed, default=VENDOR_DEFAULT_SEED),
-            source=source,
+
+    entry = match_vendor_entry(model, policy_file)
+    if entry is not None:
+        return _vendor_policy_from_entry(
+            entry,
+            model=model,
+            budget_overrides=budget_overrides,
+            seed=seed,
+            adopted=False,
         )
 
     warnings.warn(

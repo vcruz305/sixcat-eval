@@ -4,9 +4,9 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.3 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for the Hermes
-skill GitHub release check, `sixcat retry-plan` for existing receipts, and
-loopback-port resume. 0.4.2 added merged `--retry` after TIMEUP.
+**0.4.4 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for Telegram
+option-only follow-ups and adopting a reviewed vendor family when the model
+ID has no catalog row. 0.4.3 added the GitHub release check and `retry-plan`.
 
 ## Top features
 
@@ -266,8 +266,9 @@ options, including Custom follow-ups.
   explicitly supplied.
 - **🎛️ Custom sampling** — choose one preset row (0.7/none, 1.0/0.95, 0.6/0.95/20/0, or 0.0/none).
 
-If preview later shows no reviewed vendor mapping, Sixcat does not launch a fake
-vendor comparison. Switch to custom or strict from option rows.
+If preview later shows no reviewed vendor mapping, do not launch a fake
+vendor run. Ask whether to adopt a listed vendor family, enter custom
+sampling, or use the deterministic baseline.
 
 #### B. 📏 How large should the evaluation be?
 

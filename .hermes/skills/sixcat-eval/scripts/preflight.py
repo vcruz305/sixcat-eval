@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from sixcat.policy import resolve_policy  # noqa: E402
+from sixcat.policy import resolve_policy, vendor_family_catalog  # noqa: E402
 
 
 DEFAULT_CANDIDATES = (
@@ -127,11 +127,14 @@ def select_target(discovered: list[dict[str, Any]], requested_model: str | None)
 
 
 def policy_preview(model: str) -> dict[str, Any]:
+    catalog = vendor_family_catalog(model=model)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         resolved = resolve_policy("vendor", model)
     return {
         "recommended_policy": "vendor" if resolved.name == "vendor" else "strict",
+        "vendor_mapping": catalog.get("mapping"),
+        "suggested_families": catalog.get("suggested") or [],
         "resolved_policy": resolved.to_dict(),
         "policy_source": resolved.source,
         "policy_fingerprint": resolved.fingerprint,

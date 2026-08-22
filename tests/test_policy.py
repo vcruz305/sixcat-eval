@@ -1014,6 +1014,7 @@ class TestPolicyCliWiring(unittest.TestCase):
             budget_overrides={"math": 2222},
             seed=42,
             policy_file=Path("custom.json"),
+            family=None,
         )
         policy = client_type.call_args.args[2]
         self.assertEqual(policy.extra["seed"], 42)
@@ -1073,6 +1074,7 @@ class TestPolicyCliWiring(unittest.TestCase):
             budget_overrides=None,
             seed=None,
             policy_file=None,
+            family=None,
         )
         policy = real_resolve(*resolve.call_args.args, **resolve.call_args.kwargs)
         self.assertEqual(policy.extra["seed"], 1)

@@ -1,3 +1,37 @@
+# Sixcat 0.4.4 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.3
+
+**Status:** final release
+
+Sixcat 0.4.4 keeps every Hermes skill question on Telegram buttons and lets an
+unmapped model reuse a reviewed vendor family instead of typing temperatures
+or falling back to strict.
+
+## Option-only follow-ups
+
+- Every `clarify` call must include a non-empty `choices` array.
+- A question-only follow-up becomes a bare Telegram `?` with no buttons.
+- The setup form is one `clarify` whose four items each carry their own
+  `choices`. Missing choices on any item drop the buttons.
+
+## Adopt a reviewed vendor family
+
+- If vendor/compare has no catalog row, ask: adopt a listed family, enter
+  custom sampling, or stay on the deterministic baseline.
+- `python -m sixcat families --model <id> --json` suggests nearby families
+  and pages the catalog in groups of four.
+- `--policy vendor --policy-family glm-5.x` applies that recipe to an
+  unmapped or future model ID. The receipt source records `adopted-for=`.
+
+## Verification receipts
+
+- `python -m pytest -q`: **232 passed, 169 subtests passed**.
+
+---
+
 # Sixcat 0.4.3 Release Notes
 
 **Release date:** 2026-08-22

@@ -180,6 +180,27 @@ class TestRetryMerge(unittest.TestCase):
         self.assertIn("600.0", argv)
         self.assertNotIn("--no-resume", argv)
 
+    def test_retry_plan_keeps_adopted_vendor_family(self):
+        from sixcat.run import retry_plan_from_result
+
+        plan = retry_plan_from_result(
+            {
+                "model": "acme-glm-next",
+                "limit": 20,
+                "request_timeout_seconds": 180.0,
+                "code_execution": "host-guarded",
+                "log": "results/hermes/run.jsonl",
+                "policy_source": "vendor:glm-5.x|adopted-for=acme-glm-next|source=https://example.com|reviewed=2026-08-22",
+                "policy": {"name": "vendor", "thinking": True, "extra": {"seed": 1}},
+                "n": {"knowledge": 20, "math": 20, "truth": 20, "instruct": 20, "code": 20, "tools": 20},
+                "items": {},
+            },
+            retry="failed",
+            result_path="results/hermes/run.json",
+        )
+        self.assertIn("--policy-family", plan["argv"])
+        self.assertIn("glm-5.x", plan["argv"])
+
     def test_cli_rejects_retry_with_no_resume(self):
         from sixcat.__main__ import main
 

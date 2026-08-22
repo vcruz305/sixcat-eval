@@ -8,7 +8,7 @@ from .code import run_code
 from .dataio import read_jsonl
 from .instruct import item_ok
 from .journal import Session, apply_item_gate, emit
-from .policy import STRICT_BUDGETS, probe_policy
+from .policy import STRICT_BUDGETS, family_from_source, probe_policy
 from .report import PARSER_VERSION, RESULT_SCHEMA
 from .score import (
     CATEGORIES,
@@ -104,6 +104,10 @@ def retry_plan_from_result(result: dict[str, Any], *, retry: str, result_path: s
     extra = policy.get("extra") if isinstance(policy.get("extra"), dict) else {}
     if extra.get("seed") is not None:
         argv.extend(["--seed", str(extra["seed"])])
+    source = str(result.get("policy_source") or policy.get("source") or "")
+    family = family_from_source(source)
+    if family:
+        argv.extend(["--policy-family", family])
     if result.get("limit") is None:
         argv.extend(["--full", "--max-minutes", "0"])
     else:

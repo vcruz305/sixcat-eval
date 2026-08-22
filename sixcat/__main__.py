@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .client import ChatClient
 from .journal import RunJournal, Session, TimeBudget
-from .policy import custom_policy, override_thinking, resolve_policy
+from .policy import custom_policy, override_thinking, resolve_policy, vendor_family_catalog
 from .report import (
     PARSER_VERSION,
     RESULT_SCHEMA,
@@ -111,6 +111,11 @@ def _run_main(argv: list[str]) -> int:
     )
     p.add_argument("--policy-file", type=Path, default=None, help="Reviewed vendor policy mapping JSON.")
     p.add_argument(
+        "--policy-family",
+        default=None,
+        help="Apply this reviewed vendor family even if the model ID does not match.",
+    )
+    p.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -198,6 +203,8 @@ def _run_main(argv: list[str]) -> int:
         p.error("--policy custom requires --temperature")
     if args.policy != "custom" and any(value is not None for value in custom_values):
         p.error("--temperature/--top-p/--top-k/--min-p require --policy custom")
+    if args.policy_family and args.policy not in {"vendor", "both"}:
+        p.error("--policy-family requires --policy vendor or --policy both")
 
     limit = None if args.full else args.limit
     requested_log = args.log
@@ -247,6 +254,7 @@ def _run_main(argv: list[str]) -> int:
                     budget_overrides=budgets or None,
                     seed=args.seed,
                     policy_file=args.policy_file,
+                    family=args.policy_family if policy_name == "vendor" else None,
                 )
             if args.thinking is not None:
                 policy = override_thinking(policy, args.thinking == "on")
@@ -367,12 +375,47 @@ def _retry_plan_main(argv: list[str]) -> int:
     return 0
 
 
+def _families_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sixcat families",
+        description="List reviewed vendor families and suggest a match for an unmapped model.",
+    )
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--group", choices=("qwen", "deepseek", "glm", "other"), default=None)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        catalog = vendor_family_catalog(model=args.model, group=args.group)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(catalog, indent=2, ensure_ascii=False))
+        return 0
+    mapping = catalog.get("mapping")
+    if mapping:
+        print(f"mapped {mapping['family']} ({mapping['label']})")
+    elif args.model:
+        print(f"unmapped {args.model}")
+    suggested = catalog.get("suggested") or []
+    if suggested:
+        print("suggested:")
+        for item in suggested:
+            print(f"  {item['label']}")
+    print("families:")
+    for item in catalog.get("families") or []:
+        print(f"  {item['label']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "compare":
         return _compare_main(args[1:])
     if args and args[0] == "retry-plan":
         return _retry_plan_main(args[1:])
+    if args and args[0] == "families":
+        return _families_main(args[1:])
     return _run_main(args)
 
 

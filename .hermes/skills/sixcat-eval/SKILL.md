@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.3
+version: 0.4.4
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -61,6 +61,20 @@ actual model server. If no target is reachable, report that prerequisite.
 
 ## Procedure
 
+Hard rule for every question, including target, sampling, size, code,
+thinking, release update, retry mode, and vendor-family adopt:
+
+- Call `clarify` with a non-empty `choices` array of 2-4 strings.
+- Never send a `clarify` that is only a question. On Telegram that becomes a
+  bare `?` prompt with no buttons.
+- Never put the options only in the question text or in a chat message.
+- Never send prose like "now the setup form" instead of the `clarify` call.
+- A batched `questions` array is allowed only when **every** item has its own
+  `choices`. Telegram asks those one at a time; missing `choices` on any item
+  drops the buttons.
+- Preferred Telegram shape: one `clarify` whose `questions` list has four
+  items, each with `question` plus `choices`.
+
 ### 0. Check for a newer Sixcat release
 
 Before any target, retry, or sampling question, run:
@@ -112,7 +126,19 @@ Before probing any endpoint, ask exactly:
 > 🎯 Do you want to run Sixcat against the model I am currently running,
 > another Hermes profile, or an alternate OpenAI-compatible endpoint?
 
-Use one `clarify` question. Each choice must include its mini-explainer:
+Use one `clarify` question **with `choices`**. Do not write the numbered list
+into the question text. Call it like this:
+
+```text
+clarify(
+  question='🎯 Do you want to run Sixcat against the model I am currently running, another Hermes profile, or an alternate OpenAI-compatible endpoint?',
+  choices=[
+    '🧠 Current Hermes session model — evaluate the exact live model through the raw-model bridge',
+    '👤 Another Hermes profile — that profile’s configured default model',
+    '🔌 Alternate OpenAI-compatible endpoint — an already-running /v1 server'
+  ]
+)
+```
 
 1. **🧠 Current Hermes session model (recommended)** — evaluate the exact model
    and provider powering this conversation through the clean raw-model bridge;
@@ -167,10 +193,56 @@ immediately offer the common loopback candidates as choices (plus Other):
 - `http://127.0.0.1:8000/v1`
 - `http://127.0.0.1:30000/v1`
 
-Then immediately send one batched `clarify` form with four independently
-answerable questions. Prefix every question and every choice with the distinct
-emoji shown below. Always offer the four sampling choices now; do not wait to
-learn whether a reviewed mapping exists.
+Then immediately send one `clarify` whose `questions` array has four items.
+Do not inspect, preflight, or write a "setup form" chat message first. Every
+item MUST include its own `choices`. This is the required payload:
+
+```text
+clarify(
+  question='Sixcat setup',
+  questions=[
+    {
+      question='🎛️ How should the model sample answers?',
+      choices=[
+        '🏷️ Vendor-recommended temperature/settings — reviewed card, seed 1',
+        '🔬 Compare baseline vs vendor settings — two receipts plus a delta',
+        '🧊 Deterministic temperature baseline — temperature 0',
+        '🎛️ Custom sampling — pick a preset row next'
+      ]
+    },
+    {
+      question='📏 How large should the evaluation be?',
+      choices=[
+        '⚖️ Standard — 20 items per category, about 120 total, 30-minute cap',
+        '⚡ Quick smoke — 3 items per category, about 18 total, 10-minute cap',
+        '🧭 Full battery — every shipped row, no wall cap',
+        '🛠️ Custom size — pick a preset row next'
+      ]
+    },
+    {
+      question='🧪 Should Sixcat execute generated HumanEval code?',
+      choices=[
+        '🛡️ Host-guarded HumanEval — short-lived subprocess, not a security sandbox',
+        '🚫 Skip generated-code execution — Code becomes n/a'
+      ]
+    },
+    {
+      question='🧠 Should reasoning/thinking be enabled?',
+      choices=[
+        '🧠 Thinking on — recommended when supported, even if the API hides CoT',
+        '⚡ Thinking off — faster baseline; do not pick this just because traces are hidden'
+      ]
+    }
+  ]
+)
+```
+
+If a platform cannot batch, send those four `clarify` calls one after another,
+each with the same `choices`. Never send the question without `choices`.
+
+Always offer the four sampling choices now; do not wait to learn whether a
+reviewed mapping exists. If vendor later has no mapping, ask the family-adopt
+question in step 4.
 
 #### A. 🎛️ How should the model sample answers?
 
@@ -298,9 +370,32 @@ what they mean:
 
 A request for internal `--policy vendor` that resolves to strict is a fallback,
 not a vendor-recommended receipt. Never infer settings from model size or vendor
-name when the catalog has no reviewed row. If the user picked vendor or compare
-and preview shows that fallback, ask with options whether to continue as custom
-or strict instead of launching a fake vendor run.
+name when the catalog has no reviewed row.
+
+If the user picked vendor or compare and preview shows no mapping, immediately
+ask this option-only `clarify` (do not launch a fake vendor run):
+
+```text
+clarify(
+  question='🏷️ No reviewed vendor row for this model ID. Use a listed family, enter your own settings, or stay on the deterministic baseline?',
+  choices=[
+    '🏷️ Adopt a reviewed vendor family — e.g. glm-5.x for a future GLM-5, without typing temps',
+    '🎛️ Enter custom sampling — pick a preset temperature row',
+    '🧊 Deterministic baseline — temperature 0'
+  ]
+)
+```
+
+If they adopt a family:
+
+1. Run `python -m sixcat families --model <id> --json`.
+2. Ask another `clarify` whose `choices` are the top 3 `suggested[].label`
+   values plus `📂 Browse family groups`.
+3. Browse groups with exactly these choices: `Qwen / Ornith`, `DeepSeek`,
+   `GLM / Kimi`, `Other reviewed families`. Then page at most 4 family labels
+   from `python -m sixcat families --group <qwen|deepseek|glm|other> --json`.
+4. Launch with `--policy vendor --policy-family <family>`. The receipt source
+   will say `adopted-for=<model>`; that is not an auto-detected mapping.
 
 ### 5. Show the exact run receipt before execution
 
@@ -454,4 +549,8 @@ The skill is working when:
 - a timed-out or incomplete run asked to merge remaining/failed items instead of
   suggesting a full rerun;
 - a newer GitHub release was offered as an option-only update before any other
-  Sixcat question.
+  Sixcat question;
+- every `clarify` call, including follow-ups, included a non-empty `choices`
+  array so Telegram rendered buttons instead of a bare question;
+- an unmapped vendor request offered adopt-family, custom, or strict instead of
+  launching a fake vendor run.
