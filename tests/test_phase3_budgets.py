@@ -94,6 +94,33 @@ class TestPhase3CliWiring(unittest.TestCase):
             limit=20,
             session=session_type.return_value,
             skip_code_exec=False,
+            configured_ctx=None,
+        )
+        journal_type.return_value.close.assert_called_once_with()
+
+    def test_main_forwards_ctx_override_without_changing_default_budgets(self):
+        from unittest.mock import patch
+
+        from sixcat.__main__ import main
+
+        with (
+            patch("sixcat.__main__.RunJournal") as journal_type,
+            patch("sixcat.__main__.Session") as session_type,
+            patch("sixcat.__main__.ChatClient") as client_type,
+            patch("sixcat.__main__.run_battery", return_value={}) as run_battery,
+            patch("sixcat.__main__.render_table", return_value="ok"),
+        ):
+            rc = main(
+                ["--model", "ornith-nomtp", "--log", "ignored.jsonl", "--no-resume", "--ctx", "32768"]
+            )
+
+        self.assertEqual(rc, 0)
+        run_battery.assert_called_once_with(
+            client_type.return_value,
+            limit=20,
+            session=session_type.return_value,
+            skip_code_exec=False,
+            configured_ctx=32768,
         )
         journal_type.return_value.close.assert_called_once_with()
 

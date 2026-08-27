@@ -613,6 +613,12 @@ def probe_policy(client: Any) -> dict[str, Any]:
         "reasoning_tokens": evidence["reasoning_tokens"],
         "reasoning_exposure": exposure,
         "finish": out.get("finish"),
+        "prompt_tokens": usage.get("prompt_tokens"),
         "completion_tokens": usage.get("completion_tokens"),
         "request_params": out.get("request_params"),
+        "wall_s": out.get("wall_s"),
+        "wall_tps": out.get("wall_tps"),
+        "prefill_tps": out.get("prefill_tps"),
+        "decode_tps": out.get("decode_tps"),
+        "speed_source": out.get("speed_source"),
     }

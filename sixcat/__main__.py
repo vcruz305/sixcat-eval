@@ -155,6 +155,12 @@ def _run_main(argv: list[str]) -> int:
         help="Per-request HTTP timeout in seconds. Default 180; raise for long thinking completions.",
     )
     p.add_argument(
+        "--ctx",
+        type=int,
+        default=None,
+        help="Operator context override in tokens. Recorded as configured, not detected. Does not change scoring or --max-minutes.",
+    )
+    p.add_argument(
         "--skip-code-exec",
         action="store_true",
         help="Skip HumanEval model-code execution (enabled by default in a guarded host subprocess).",
@@ -192,6 +198,8 @@ def _run_main(argv: list[str]) -> int:
     args = p.parse_args(argv)
     if args.request_timeout <= 0:
         p.error("--request-timeout must be positive")
+    if args.ctx is not None and args.ctx <= 0:
+        p.error("--ctx must be a positive token count")
 
     try:
         budgets = parse_budget_overrides(args.budget)
@@ -296,6 +304,7 @@ def _run_main(argv: list[str]) -> int:
                 limit=limit,
                 session=session,
                 skip_code_exec=args.skip_code_exec,
+                configured_ctx=args.ctx,
             )
         finally:
             journal.close()
@@ -408,6 +417,47 @@ def _families_main(argv: list[str]) -> int:
     return 0
 
 
+def _preflight_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sixcat preflight",
+        description="Detect served context and estimate ETA without scoring.",
+    )
+    parser.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--api-key", default=os.environ.get("SIXCAT_API_KEY", "none"))
+    parser.add_argument("--ctx", type=int, default=None)
+    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--skip-code-exec", action="store_true")
+    parser.add_argument("--thinking", choices=("on", "off"), default="off")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    if args.ctx is not None and args.ctx <= 0:
+        parser.error("--ctx must be a positive token count")
+    from .client import fetch_server_props
+    from .context_preflight import assemble_preflight, format_preflight
+    from .policy import STRICT_BUDGETS, THINKING_BUDGETS
+    from .run import expected_scored_items
+
+    server_props = fetch_server_props(args.base_url, args.api_key)
+    budgets = THINKING_BUDGETS if args.thinking == "on" else STRICT_BUDGETS
+    limit = None if args.full else args.limit
+    preflight = assemble_preflight(
+        requested_model=args.model,
+        server_props=server_props,
+        probe=None,
+        n_items=expected_scored_items(limit, skip_code_exec=args.skip_code_exec),
+        output_reserve=max(budgets.values()),
+        configured_ctx=args.ctx,
+        thinking=args.thinking == "on",
+    )
+    if args.json:
+        print(json.dumps(preflight, indent=2, ensure_ascii=False))
+    else:
+        print(format_preflight(preflight))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "compare":
@@ -416,6 +466,8 @@ def main(argv: list[str] | None = None) -> int:
         return _retry_plan_main(args[1:])
     if args and args[0] == "families":
         return _families_main(args[1:])
+    if args and args[0] == "preflight":
+        return _preflight_main(args[1:])
     return _run_main(args)
 
 

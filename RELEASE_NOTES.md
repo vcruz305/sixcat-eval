@@ -1,3 +1,50 @@
+# Sixcat 0.4.5 Release Notes
+
+**Release date:** 2026-08-27
+
+**Previous release:** 0.4.4
+
+**Status:** final release
+
+Sixcat 0.4.5 treats served-context detection and probe-cost estimation as
+observe-only preflight inputs, not a second scoring box.
+
+## Context is evidence, not a bare integer
+
+- `/props` and `/v1/models` are queried independently. Both raw payloads are
+  kept on `server_props`.
+- Candidates keep source, field path, layer (`runtime_total_ctx` vs
+  `native_max_ctx`), and model association.
+- Context is matched to the requested model. Ambiguous aliases and first-entry
+  `/v1/models` lists do not silently become `ctx=32768`.
+- Runtime disagreement uses the smaller value and emits `CTX_CONFLICT`.
+- `--ctx N` is recorded as `configured`, not detected.
+- Advertised context, output reserve, and `max(512, 2%)` safety margin produce
+  a safe input budget. That budget is printed; Phase 1 does not skip items.
+
+## Probe cost is a range
+
+- The existing thinking probe is reused. No second generate.
+- Usage prefers API token fields, including reasoning tokens when present.
+- ETA is a low/high range with confidence. Hidden reasoning without usage
+  metadata is `ETA_LOW_CONFIDENCE`, not a fake 256-token constant.
+- Suggested request timeout is recorded. `--max-minutes` is never derived from
+  the probe.
+
+## Operator surface
+
+- Result JSON includes `preflight` (`phase=observe`).
+- The printed table shows the preflight block.
+- `python -m sixcat preflight --model <id>` prints context diagnostics
+  without a generate. ETA ranges appear on scored runs from the thinking
+  probe.
+
+## Verification receipts
+
+- `python -m pytest -q`: **261 passed**.
+
+---
+
 # Sixcat 0.4.4 Release Notes
 
 **Release date:** 2026-08-22

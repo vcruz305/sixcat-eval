@@ -4,6 +4,7 @@ import copy
 from typing import Any
 
 from .client import ChatClient, fetch_server_props
+from .context_preflight import assemble_preflight, format_preflight
 from .code import run_code
 from .dataio import read_jsonl
 from .instruct import item_ok
@@ -429,12 +430,25 @@ def run_battery(
     session: Session | None = None,
     *,
     skip_code_exec: bool = False,
+    configured_ctx: int | None = None,
 ) -> dict:
     resolved_budgets = dict(client.policy.budgets)
     server_props = fetch_server_props(client.base_url, client.api_key)
     policy_probe_details = probe_policy(client)
     if policy_probe_details.get("status") != "ok":
         raise RuntimeError(f"policy probe failed: {policy_probe_details.get('reason', 'unknown failure')}")
+    output_reserve = max(resolved_budgets.values()) if resolved_budgets else 1024
+    preflight = assemble_preflight(
+        requested_model=client.model,
+        server_props=server_props,
+        probe=policy_probe_details,
+        n_items=expected_scored_items(limit, skip_code_exec=skip_code_exec),
+        output_reserve=output_reserve,
+        configured_ctx=configured_ctx,
+        thinking=bool(client.policy.thinking),
+        cache_key=f"{client.base_url}|{client.model}|chat",
+        store_cache=True,
+    )
     packs = {
         "knowledge": run_knowledge(client, limit, session, resolved_budgets),
         "math": run_math(client, limit, session, resolved_budgets),
@@ -462,6 +476,7 @@ def run_battery(
         "base_url": client.base_url,
         "request_timeout_seconds": getattr(client, "timeout", None),
         "server_props": server_props,
+        "preflight": preflight,
         "policy": client.policy.to_dict(),
         "policy_source": client.policy.source,
         "policy_probe": policy_probe_details["status"],
@@ -508,10 +523,17 @@ def render_table(result: dict) -> str:
         f"policy: {policy_name} ({result.get('policy_fingerprint')})",
         f"source: {result.get('policy_source')}",
         f"code execution: {result.get('code_execution', 'unrecorded')}",
-        "",
-        header,
-        separator,
     ]
+    preflight = result.get("preflight")
+    if isinstance(preflight, dict):
+        lines.extend(["", format_preflight(preflight)])
+    lines.extend(
+        [
+            "",
+            header,
+            separator,
+        ]
+    )
     stats = result.get("stats") or {}
     any_truncated = False
     missing_categories: list[str] = []
