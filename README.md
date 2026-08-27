@@ -4,9 +4,10 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.4 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for Telegram
+**0.4.5 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for observe-only
+served-context detection and probe-cost ETA ranges. 0.4.4 kept Telegram
 option-only follow-ups and adopting a reviewed vendor family when the model
-ID has no catalog row. 0.4.3 added the GitHub release check and `retry-plan`.
+ID has no catalog row.
 
 ## Top features
 
@@ -18,6 +19,10 @@ ID has no catalog row. 0.4.3 added the GitHub release check and `retry-plan`.
 - **A useful daily run with a 30-minute cap.** Six community categories roll into one
   unweighted overall; every completed item is journaled so interrupted runs resume instead
   of starting over.
+- **Observe-only served context and ETA.** Preflight keeps every context candidate and
+  its source, matches `/v1/models` to the requested ID, derives a safe input budget, and
+  prints an ETA range from the thinking probe. It does not score, skip items, or set
+  `--max-minutes`.
 - **Scoring that fails closed.** Scorer/parser v4 explicitly checks all 23 shipped IFEval
   constraints, maps ARC labels to the choices shown to the model, ignores thinking as an
   answer, and never awards blank or unsupported instructions a free pass.
@@ -130,9 +135,12 @@ cd sixcat-eval
 python -m pip install -e .
 
 python -m sixcat --base-url http://127.0.0.1:8085/v1 --model qwen38-27b --out run.json
+python -m sixcat preflight --base-url http://127.0.0.1:8085/v1 --model qwen38-27b
 ```
 
 Default is `--limit 20` and `--max-minutes 30`. **The limit is per category**, so the standard run targets about 120 scored rows: 20 each for Knowledge, Math, Truth, Instruction, Code, and Tools. Knowledge's MMLU/ARC/HellaSwag/WinoGrande sources share those 20 slots instead of multiplying them to 80. Each item is appended to `run.jsonl` as it finishes. Every journal starts with a run-identity header covering model, endpoint, policy fingerprint, parser, budgets, limit, `limit_scope=per_category`, request timeout, and code-execution mode. Rerunning an identical command prints `SKIP` for completed keys; any identity mismatch aborts before model traffic. Pre-0.4 journals require a fresh log or `--no-resume`.
+
+Before scoring, Sixcat records an observe-only **preflight** object: served context candidates (`/props` `n_ctx`, `/v1/models` `max_model_len` / `context_length`) matched to the requested model, a conservative advertised context, a safe input budget (advertised minus output reserve minus `max(512, 2%)`), and an ETA **range** from the existing thinking probe's actual usage/timings. `--ctx N` records an operator override as `configured`. Preflight never awards points and never sets `--max-minutes`. `python -m sixcat preflight` prints the context diagnostics without a generate; ETA appears on a scored run from the thinking probe.
 
 Limited runs use frozen **`challenge-v1`** selection rather than the first rows:
 Quick takes the hardest few, Standard takes a hard/diverse 20, and Full preserves
@@ -349,6 +357,7 @@ The comparison command refuses to compare a `--limit` smoke against a full run b
   final answers before its low-confidence fallback.
 - Dedicated or inline thinking is never parsed as the answer.
 - Tools: OpenAI `tools=` on `/v1/chat/completions`.
+- Context and probe-cost estimates are preflight inputs with provenance, not scores.
 
 Unit tests (no GPU):
 

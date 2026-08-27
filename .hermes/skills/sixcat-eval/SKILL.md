@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.4
+version: 0.4.5
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -367,6 +367,12 @@ what they mean:
   **some endpoints ignore it**, so it is not a universal reproducibility promise.
 - Show category token budgets, cited settings source, policy fingerprint, and every
   fallback or ambiguity warning.
+- After the target is resolved, run `python -m sixcat preflight --base-url <url>
+  --model <id>` or read `preflight` from a result JSON. Show served context, source
+  field, safe input budget, ETA range with confidence, and warning codes. This is
+  observe-only: it is not a score, it must not set `--max-minutes`, and metadata
+  failure must not abort the run. `--ctx N` records an operator override as
+  configured, not detected.
 
 A request for internal `--policy vendor` that resolves to strict is a fallback,
 not a vendor-recommended receipt. Never infer settings from model size or vendor
@@ -531,6 +537,8 @@ from the rewritten JSON, including `continuation.failed_rescored`.
 - **No destructive server control.** This skill never kills or rebinds a process.
 - **No full rerun after TIMEUP.** Offer `--retry remaining|failed|incomplete` on
   the same journal so leftover or failed items merge into one receipt.
+- **Preflight is not a score.** Context detection and probe-cost ETA are
+  diagnostics. Do not award points from them or turn ETA into a suite fuse.
 
 ## Verification
 

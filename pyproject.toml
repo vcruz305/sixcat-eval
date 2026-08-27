@@ -1,6 +1,6 @@
 [project]
 name = "sixcat-eval"
-version = "0.4.4"
+version = "0.4.5"
 description = "Six community LLM categories + one overall score. Fast local OpenAI-compatible eval."
 readme = "README.md"
 requires-python = ">=3.11"

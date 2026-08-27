@@ -136,29 +136,49 @@ def apply_stream_speed(
     return out
 
 
+def _get_json(url: str, headers: dict[str, str], timeout: float) -> tuple[Any, str | None]:
+    try:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode()), None
+    except Exception as exc:
+        return None, str(exc)
+
+
 def fetch_server_props(base_url: str, api_key: str = "none", timeout: float = 10.0) -> dict[str, Any]:
     """Best-effort server identity fingerprint, for run provenance (Phase 1).
 
-    Tries llama.cpp's `/props` first (model path, build info, n_ctx), then falls back to
-    the OpenAI-compatible `/v1/models` (vLLM/SGLang/llama.cpp all serve this). Never raises;
-    a probe that can't identify the server is itself a fact worth recording.
+    Queries llama.cpp `/props` and OpenAI-compatible `/v1/models` independently.
+    Never raises; a probe that can't identify the server is itself a fact worth recording.
+    `source`/`props` keep the historical primary payload; extra keys hold both raw bodies.
     """
     headers = {"Authorization": f"Bearer {api_key}"}
     root = _root_url(base_url)
-    try:
-        req = urllib.request.Request(root + "/props", headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
-        return {"source": "llama_cpp_props", "props": data}
-    except Exception:
-        pass
-    try:
-        req = urllib.request.Request(base_url.rstrip("/") + "/models", headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
-        return {"source": "openai_models", "props": data}
-    except Exception as e:
-        return {"source": "unavailable", "error": str(e)}
+    llama_cpp_props, props_error = _get_json(root + "/props", headers, timeout)
+    openai_models, models_error = _get_json(base_url.rstrip("/") + "/models", headers, timeout)
+    if llama_cpp_props is not None:
+        source = "llama_cpp_props"
+        primary = llama_cpp_props
+    elif openai_models is not None:
+        source = "openai_models"
+        primary = openai_models
+    else:
+        return {
+            "source": "unavailable",
+            "error": models_error or props_error,
+            "llama_cpp_props": None,
+            "openai_models": None,
+            "props_error": props_error,
+            "models_error": models_error,
+        }
+    return {
+        "source": source,
+        "props": primary,
+        "llama_cpp_props": llama_cpp_props,
+        "openai_models": openai_models,
+        "props_error": props_error,
+        "models_error": models_error,
+    }
 
 
 class ChatClient:
