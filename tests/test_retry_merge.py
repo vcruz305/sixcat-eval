@@ -201,6 +201,47 @@ class TestRetryMerge(unittest.TestCase):
         self.assertIn("--policy-family", plan["argv"])
         self.assertIn("glm-5.x", plan["argv"])
 
+    def test_retry_plan_preserves_stdio_transport(self):
+        from sixcat.run import retry_plan_from_result
+
+        plan = retry_plan_from_result(
+            {
+                "model": "glm-5.3-flash",
+                "limit": 20,
+                "request_timeout_seconds": 180.0,
+                "code_execution": "host-guarded",
+                "log": "results/stdio/run.jsonl",
+                "policy_source": "vendor:glm-5.x|adopted-for=glm-5.3-flash|source=https://example.com|reviewed=2026-08-22",
+                "policy": {"name": "vendor", "thinking": True, "extra": {"seed": 1}},
+                "transport": "stdio",
+                "n": {"knowledge": 20, "math": 20, "truth": 20, "instruct": 20, "code": 20, "tools": 20},
+                "items": {},
+            },
+            retry="failed",
+            result_path="results/stdio/run.json",
+        )
+        argv = plan["argv"]
+        self.assertIn("--transport", argv)
+        self.assertEqual(argv[argv.index("--transport") + 1], "stdio")
+
+    def test_retry_plan_defaults_to_openai_transport(self):
+        from sixcat.run import retry_plan_from_result
+
+        plan = retry_plan_from_result(
+            {
+                "model": "m",
+                "limit": 20,
+                "request_timeout_seconds": 180.0,
+                "code_execution": "host-guarded",
+                "policy_source": "vendor:glm-5.x|source=https://example.com|reviewed=2026-08-22",
+                "policy": {"name": "vendor", "thinking": True, "extra": {"seed": 1}},
+                "n": {"knowledge": 20, "math": 20, "truth": 20, "instruct": 20, "code": 20, "tools": 20},
+                "items": {},
+            },
+            retry="failed",
+        )
+        self.assertNotIn("--transport", plan["argv"])
+
     def test_cli_rejects_retry_with_no_resume(self):
         from sixcat.__main__ import main
 

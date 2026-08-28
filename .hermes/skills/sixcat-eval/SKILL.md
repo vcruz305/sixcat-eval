@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.4.5
+version: 0.5.0
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -124,18 +124,20 @@ questionnaire. Do not use `--no-resume`.
 Before probing any endpoint, ask exactly:
 
 > 🎯 Do you want to run Sixcat against the model I am currently running,
-> another Hermes profile, or an alternate OpenAI-compatible endpoint?
+> another Hermes profile, an alternate OpenAI-compatible endpoint, or this
+> harness directly over stdio?
 
 Use one `clarify` question **with `choices`**. Do not write the numbered list
 into the question text. Call it like this:
 
 ```text
 clarify(
-  question='🎯 Do you want to run Sixcat against the model I am currently running, another Hermes profile, or an alternate OpenAI-compatible endpoint?',
+  question='🎯 Do you want to run Sixcat against the model I am currently running, another Hermes profile, an alternate OpenAI-compatible endpoint, or this harness directly over stdio?',
   choices=[
     '🧠 Current Hermes session model — evaluate the exact live model through the raw-model bridge',
     '👤 Another Hermes profile — that profile’s configured default model',
-    '🔌 Alternate OpenAI-compatible endpoint — an already-running /v1 server'
+    '🔌 Alternate OpenAI-compatible endpoint — an already-running /v1 server',
+    '🧜 Harness-driven stdio — this agent answers Sixcat’s raw requests directly (no exportable key needed)'
   ]
 )
 ```
@@ -147,6 +149,14 @@ clarify(
    model using the authentication already stored for that profile.
 3. **🔌 Alternate OpenAI-compatible endpoint** — evaluate an already-running
    `/v1/chat/completions` server selected through its `/v1/models` identity.
+4. **🧜 Harness-driven stdio** — the agent itself answers Sixcat's JSONL
+   `complete` requests on stdin (`--transport stdio`). Use this when the model
+   is reachable only inside the harness and has no exportable API key. Follow
+   [docs/harness-stdio.md](../../../docs/harness-stdio.md): answer every request
+   including the unscored policy probe, apply `request_params` to the underlying
+   model call, send `finish:"length"` on truncation, and use the OpenAI
+   `tool_calls` shape for tool answers. Verification in step 8 uses the journal
+   identity (`transport=stdio`) instead of the `/v1/models` guard.
 
 Do not silently choose a localhost model server. The default recommendation is
 the current caller's exact live model and provider, including a session `/model`

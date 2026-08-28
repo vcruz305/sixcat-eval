@@ -141,7 +141,10 @@ on exactly this; the driver now drains stderr in a thread).
 
 ## 3. Item-level results
 
-Ten items failed. Honest breakdown:
+Ten items failed. Honest breakdown. (Post-run note: the three data-quality
+items below were verified against their upstream sources — google/IFEval,
+tinyBenchmarks — and are upstream-faithful, not sixcat bugs; see
+[docs/eval-run-findings.md](docs/eval-run-findings.md).)
 
 | category | item | what happened |
 |---|---|---|

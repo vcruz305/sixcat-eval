@@ -117,6 +117,10 @@ def retry_plan_from_result(result: dict[str, Any], *, retry: str, result_path: s
     timeout = result.get("request_timeout_seconds")
     if timeout:
         argv.extend(["--request-timeout", str(timeout)])
+    if result.get("transport", "openai") == "stdio":
+        # Journal identity records transport; a retry plan that dropped it
+        # could never resume a stdio receipt.
+        argv.extend(["--transport", "stdio"])
     if result.get("code_execution") == "disabled":
         argv.append("--skip-code-exec")
     argv.extend(["--retry", retry])
@@ -502,6 +506,7 @@ def run_battery(
         "parser": PARSER_VERSION,
         "code_execution": code_execution,
         "result_schema": RESULT_SCHEMA,
+        "transport": getattr(client, "transport", "openai"),
         "limit": limit,
         "limit_scope": "per_category",
         "selection_profile": SELECTION_PROFILE,

@@ -135,6 +135,38 @@ def test_humaneval_tests_can_reference_candidate_module_helpers():
     )
 
 
+def test_humaneval_keeps_prompt_helpers_when_completion_restates_entry_def():
+    # HumanEval/32 (find_zero) class: the prompt provides a helper (poly) and a
+    # completion that restates the entry-point def must not lose it. The
+    # prompt's stub carries a docstring body, so prompt + completion parses.
+    from sixcat.code import _run_humaneval
+
+    assert _run_humaneval(
+        "def square(v):\n"
+        "    return v * v\n\n"
+        'def sum_squares(vals):\n    """Docstring stub."""\n',
+        "def sum_squares(vals):\n"
+        "    return sum(square(v) for v in vals)\n",
+        "def check(candidate):\n    assert candidate([1, 2, 3]) == 14\n",
+        "sum_squares",
+    )
+
+
+def test_humaneval_bodyless_stub_with_restated_def_still_runs():
+    # Degenerate shape: a stub with no body followed by a restated def cannot
+    # parse as prompt + completion; the harness must still grade via the
+    # restated definition instead of failing the item outright.
+    from sixcat.code import _run_humaneval
+
+    assert _run_humaneval(
+        "def sum_squares(vals):\n",
+        "def sum_squares(vals):\n"
+        "    return sum(v * v for v in vals)\n",
+        "def check(candidate):\n    assert candidate([1, 2, 3]) == 14\n",
+        "sum_squares",
+    )
+
+
 def test_code_execution_can_be_skipped_explicitly():
     from sixcat.code import run_code
 

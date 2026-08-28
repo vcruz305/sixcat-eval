@@ -134,11 +134,19 @@ def _run_humaneval(prompt: str, completion: str, test: str, entry: str, timeout:
     m = re.search(r"```(?:python)?\s*([\s\S]*?)```", completion)
     if m:
         body = m.group(1)
-    # A model may repeat the complete entry-point definition. Treat only an
-    # unindented definition of that exact function as a full replacement;
-    # nested helper definitions are part of an ordinary completion.
-    repeated_entry = re.search(rf"(?m)^def\s+{re.escape(entry)}\s*\(", body)
-    candidate_source = body[repeated_entry.start() :] if repeated_entry else prompt + body
+    # Concatenate prompt and completion so prompt-provided helpers (e.g.
+    # HumanEval/32's poly()) survive a completion that restates the entry
+    # def: the restated definition simply overrides the stub, and nested
+    # helpers in an ordinary completion are untouched. If concatenation does
+    # not parse (a bodyless stub followed by a restated def) fall back to the
+    # historical truncation: drop everything before the restated entry def.
+    candidate_source = prompt + body
+    if not _candidate_is_guarded(candidate_source):
+        repeated_entry = re.search(rf"(?m)^def\s+{re.escape(entry)}\s*\(", body)
+        if repeated_entry and _candidate_is_guarded(body[repeated_entry.start() :]):
+            candidate_source = body[repeated_entry.start() :]
+        else:
+            return False
     if not _candidate_is_guarded(candidate_source):
         return False
     with tempfile.TemporaryDirectory() as td:
