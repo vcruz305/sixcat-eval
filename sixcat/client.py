@@ -213,11 +213,15 @@ class ChatClient:
             if value is not None:
                 request_params[key] = value
         request_params.update(self.policy.extra)
+        template_kwargs: dict[str, Any] = {"enable_thinking": self.policy.thinking}
+        effort = self.policy.extra.get("reasoning_effort")
+        if effort is not None:
+            template_kwargs["reasoning_effort"] = effort
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             **{key: value for key, value in request_params.items() if key != "enable_thinking"},
-            "chat_template_kwargs": {"enable_thinking": self.policy.thinking},
+            "chat_template_kwargs": template_kwargs,
         }
         if tools:
             payload["tools"] = tools

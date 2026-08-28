@@ -558,11 +558,49 @@ class TestPolicyResolution(unittest.TestCase):
                 (policy.name, policy.temperature, policy.top_p, policy.top_k, policy.min_p, policy.thinking),
                 ("vendor", 1.0, 0.95, None, None, True),
             )
-            self.assertEqual(policy.extra["reasoning_effort"], "max")
+            self.assertEqual(policy.extra["reasoning_effort"], "high")
             self.assertIn("vendor:glm-5.x", policy.source)
         self.assertEqual(
             (glm52.temperature, glm52.top_p, glm52.thinking, glm52.extra["reasoning_effort"]),
             (glm53.temperature, glm53.top_p, glm53.thinking, glm53.extra["reasoning_effort"]),
+        )
+
+    def test_glm53_client_sends_reasoning_effort_high_to_template_kwargs(self):
+        import json
+        from unittest.mock import patch
+
+        from sixcat.client import ChatClient
+        from sixcat.policy import resolve_policy
+
+        policy = resolve_policy("vendor", "GLM-5.3-Flash-Q2_K")
+        response_body = {
+            "choices": [{"finish_reason": "stop", "message": {"content": "B"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1},
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return json.dumps(response_body).encode("utf-8")
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured.update(json.loads(request.data.decode("utf-8")))
+            return FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            ChatClient("http://localhost:9999/v1", "GLM-5.3-Flash-Q2_K", policy).complete("probe")
+
+        self.assertEqual(captured["reasoning_effort"], "high")
+        self.assertEqual(
+            captured["chat_template_kwargs"],
+            {"enable_thinking": True, "reasoning_effort": "high"},
         )
 
     def test_vendor_catalog_entries_are_reviewed_citations(self):

@@ -311,10 +311,10 @@
       "min_p": null,
       "thinking": true,
       "extra": {
-        "reasoning_effort": "max"
+        "reasoning_effort": "high"
       },
       "source_url": "https://huggingface.co/zai-org/GLM-5.2",
-      "source_note": "Official GLM-5.2 HLE/reasoning eval: temperature=1.0, top_p=0.95. GLM-5.3 documents the same defaults; use this family for the whole 5.x line."
+      "source_note": "Official GLM-5.2 HLE/reasoning eval: temperature=1.0, top_p=0.95. GLM-5.3 documents the same defaults; use this family for the whole 5.x line. reasoning_effort=high (GLM jinja only honors low/high; max is the template fallback when the value is missing or invalid)."
     },
     {
       "family": "glm-4.7",

@@ -1,3 +1,18 @@
+# Sixcat 0.4.6 Release Notes
+
+**Release date:** 2026-08-27
+
+**Previous release:** 0.4.5
+
+**Status:** final release
+
+GLM-5.x vendor family now sends `reasoning_effort=high` by default. GLM chat
+templates only honor `low`/`high`; any other value (including `max`) falls
+through to the template's `max` path and never leaves the think block.
+
+The client also copies `reasoning_effort` into `chat_template_kwargs` so llama.cpp
+Jinja actually sees `high`.
+
 # Sixcat 0.4.5 Release Notes
 
 **Release date:** 2026-08-27
