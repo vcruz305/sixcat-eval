@@ -251,7 +251,7 @@ def run_code(
     *,
     skip_code_exec: bool = False,
 ) -> list[dict]:
-    from .journal import apply_item_gate, emit
+    from .journal import apply_item_gate, run_pending
 
     if skip_code_exec:
         return []
@@ -263,6 +263,7 @@ def run_code(
         CODE_CHALLENGE_IDS,
         key=lambda item: str(item.get("task_id") or ""),
     )
+    pending = []
     for item in items:
         key = str(item.get("task_id") or "unknown")
         action = apply_item_gate(session, "code", key, rows)
@@ -270,6 +271,10 @@ def run_code(
             return rows
         if action == "skip":
             continue
+        pending.append((key, item))
+
+    def work(item):
+        key = str(item.get("task_id") or "unknown")
         prompt = item["prompt"]
         out = client.complete(
             "Complete the following Python function. Output only code.\n\n" + prompt,
@@ -277,32 +282,25 @@ def run_code(
         )
         ok = _run_humaneval(prompt, out["text"] or "", item["test"], item["entry_point"])
         usage = out.get("usage") or {}
-        rows.append(
-            emit(
-                session,
-                "code",
-                key,
-                {
-                    "ok": ok,
-                    "pred": (out["text"] or "")[:200],
-                    "raw_text": out["text"] or "",
-                    "reasoning_content": out.get("reasoning_content") or "",
-                    "parse_confidence": "not_applicable",
-                    "task_id": key,
-                    "entry_point": item["entry_point"],
-                    # task_id is the deterministic locator into the shipped dataset; the
-                    # large prompt/tests need not be duplicated into every result row.
-                    "grader": {
-                        "name": "humaneval-local",
-                        "dataset": "humaneval.jsonl",
-                        "task_id": key,
-                        "entry_point": item["entry_point"],
-                    },
-                    "finish": out.get("finish"),
-                    "ctok": usage.get("completion_tokens"),
-                    "ptok": usage.get("prompt_tokens"),
-                    "request_params": out.get("request_params"),
-                },
-            )
-        )
+        return {
+            "ok": ok,
+            "pred": (out["text"] or "")[:200],
+            "raw_text": out["text"] or "",
+            "reasoning_content": out.get("reasoning_content") or "",
+            "parse_confidence": "not_applicable",
+            "task_id": key,
+            "entry_point": item["entry_point"],
+            "grader": {
+                "name": "humaneval-local",
+                "dataset": "humaneval.jsonl",
+                "task_id": key,
+                "entry_point": item["entry_point"],
+            },
+            "finish": out.get("finish"),
+            "ctok": usage.get("completion_tokens"),
+            "ptok": usage.get("prompt_tokens"),
+            "request_params": out.get("request_params"),
+        }
+
+    run_pending(session, "code", pending, work, rows)
     return rows

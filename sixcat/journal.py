@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class TimeBudget:
@@ -32,6 +34,7 @@ class RunJournal:
     def __init__(self, path: Path, resume: bool = True, identity: dict[str, Any] | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._done: dict[tuple[str, str], dict[str, Any]] = {}
         self.identity = self._normalise_identity(identity)
         self._loaded_identity: dict[str, Any] | None = None
@@ -147,8 +150,10 @@ class RunJournal:
     def append_event(self, rec: dict[str, Any]) -> None:
         payload = dict(rec)
         payload.setdefault("ts", time.time())
-        self._fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        self._fh.flush()
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._fh.write(line)
+            self._fh.flush()
 
     def append(self, rec: dict[str, Any]) -> None:
         cat = str(rec["cat"])
@@ -157,14 +162,17 @@ class RunJournal:
         rec["cat"] = cat
         rec["key"] = key
         rec.setdefault("ts", time.time())
-        self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        self._fh.flush()
-        self._done[(cat, key)] = rec
+        line = json.dumps(rec, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._fh.write(line)
+            self._fh.flush()
+            self._done[(cat, key)] = rec
 
     def close(self) -> None:
-        if getattr(self, "_fh", None):
-            self._fh.close()
-            self._fh = None
+        with self._lock:
+            if getattr(self, "_fh", None):
+                self._fh.close()
+                self._fh = None
 
     def __enter__(self) -> "RunJournal":
         return self
@@ -182,6 +190,7 @@ class Session:
         retry_failed: bool = False,
         include_remaining: bool = True,
         retry_mode: str | None = None,
+        concurrency: int = 1,
     ):
         self.journal = journal
         self.budget = budget
@@ -189,6 +198,8 @@ class Session:
         self.retry_failed = retry_failed
         self.include_remaining = include_remaining
         self.retry_mode = retry_mode
+        self.concurrency = max(1, int(concurrency))
+        self._gate_lock = threading.Lock()
         self.retry_keys = journal.failed_keys() if retry_failed else set()
         self.rescored: set[tuple[str, str]] = set()
         if self.retry_keys:
@@ -203,38 +214,40 @@ class Session:
 
     def begin(self, cat: str, key: str):
         ident = (cat, str(key))
-        cached = self.journal.get(cat, str(key))
-        wants_retry = ident in self.retry_keys
-        if self.budget.expired():
-            if not self.stopped:
-                print(f"TIMEUP before {cat}/{key}", flush=True)
-            self.stopped = True
-            return cached if cached is not None else "stop"
-        if wants_retry:
+        with self._gate_lock:
+            cached = self.journal.get(cat, str(key))
+            wants_retry = ident in self.retry_keys
+            if self.budget.expired():
+                if not self.stopped:
+                    print(f"TIMEUP before {cat}/{key}", flush=True)
+                self.stopped = True
+                return cached if cached is not None else "stop"
+            if wants_retry:
+                return None
+            if cached:
+                print(f"SKIP {cat}/{key}", flush=True)
+                return cached
+            if not self.include_remaining:
+                return "omit"
             return None
-        if cached:
-            print(f"SKIP {cat}/{key}", flush=True)
-            return cached
-        if not self.include_remaining:
-            return "omit"
-        return None
 
     def finish(self, cat: str, key: str, row: dict[str, Any]) -> dict[str, Any]:
         rec = dict(row)
         rec["cat"] = cat
         rec["key"] = str(key)
         rec.setdefault("id", key)
-        self.journal.append(rec)
-        ident = (cat, str(key))
-        if ident in self.retry_keys:
-            self.rescored.add(ident)
-        mark = "PASS" if rec.get("ok") else "FAIL"
-        bits = [f"{mark} {cat}/{key}"]
-        if rec.get("pred") is not None:
-            bits.append(f"pred={rec.get('pred')}")
-        if rec.get("gold") is not None:
-            bits.append(f"gold={rec.get('gold')}")
-        print(" ".join(str(b) for b in bits), flush=True)
+        with self._gate_lock:
+            self.journal.append(rec)
+            ident = (cat, str(key))
+            if ident in self.retry_keys:
+                self.rescored.add(ident)
+            mark = "PASS" if rec.get("ok") else "FAIL"
+            bits = [f"{mark} {cat}/{key}"]
+            if rec.get("pred") is not None:
+                bits.append(f"pred={rec.get('pred')}")
+            if rec.get("gold") is not None:
+                bits.append(f"gold={rec.get('gold')}")
+            print(" ".join(str(b) for b in bits), flush=True)
         return rec
 
     def continuation_receipt(self) -> dict[str, Any]:
@@ -276,3 +289,41 @@ def emit(session: Session | None, cat: str, key: str, row: dict[str, Any]) -> di
     if session is None:
         return rec
     return session.finish(cat, key, rec)
+
+
+def concurrency_of(session: Session | None) -> int:
+    if session is None:
+        return 1
+    return max(1, int(getattr(session, "concurrency", 1) or 1))
+
+
+def run_pending(
+    session: Session | None,
+    cat: str,
+    pending: list[tuple[str, Any]],
+    worker: Callable[[Any], dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> str:
+    """Run already-gated (key, payload) pairs. Worker must not touch the journal.
+
+    Returns 'stop' if the time budget expires before a serial item starts; parallel
+    in-flight items are always drained. Default concurrency is 1 (serial).
+    """
+    if not pending:
+        return "run"
+    workers = concurrency_of(session)
+    if workers == 1:
+        for key, payload in pending:
+            if session is not None and session.budget.expired():
+                if not session.stopped:
+                    print(f"TIMEUP before {cat}/{key}", flush=True)
+                session.stopped = True
+                return "stop"
+            rows.append(emit(session, cat, key, worker(payload)))
+        return "run"
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {pool.submit(worker, payload): key for key, payload in pending}
+        for fut in as_completed(future_map):
+            key = future_map[fut]
+            rows.append(emit(session, cat, key, fut.result()))
+    return "run"

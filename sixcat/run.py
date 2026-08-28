@@ -8,7 +8,7 @@ from .context_preflight import assemble_preflight, format_preflight
 from .code import run_code
 from .dataio import read_jsonl
 from .instruct import item_ok
-from .journal import Session, apply_item_gate, emit
+from .journal import Session, apply_item_gate, emit, run_pending
 from .policy import STRICT_BUDGETS, family_from_source, probe_policy
 from .report import PARSER_VERSION, RESULT_SCHEMA
 from .score import (
@@ -248,51 +248,55 @@ def run_knowledge(
     mt = (budgets or DEFAULT_BUDGETS).get("knowledge", DEFAULT_BUDGETS["knowledge"])
     rows: list[dict] = []
     mmlu_limit, arc_limit, hellaswag_limit, winogrande_limit = split_category_limit(limit, 4)
+    pending: list[tuple[str, Any]] = []
+
+    def _gate(key: str, payload: Any) -> str:
+        action = _take(session, "knowledge", key, rows)
+        if action == "run":
+            pending.append((key, payload))
+        return action
+
     for i, item in select_indexed_by_indices(read_jsonl("tiny_mmlu.jsonl"), mmlu_limit, KNOWLEDGE_CHALLENGE_INDICES["mmlu"]):
-        key = f"mmlu:{i}"
-        action = _take(session, "knowledge", key, rows)
-        if action == "stop":
+        if _gate(f"mmlu:{i}", ("mmlu", item)) == "stop":
             return rows
-        if action == "skip":
-            continue
-        out = _ask_mc(client, item["question"], item["choices"], max_tokens=mt)
-        pred = out["pred"]
-        gold = choice_letter(int(item["answer"]))
-        rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
     for i, item in select_indexed_by_indices(read_jsonl("tiny_arc.jsonl"), arc_limit, KNOWLEDGE_CHALLENGE_INDICES["arc"]):
-        key = f"arc:{i}"
-        action = _take(session, "knowledge", key, rows)
-        if action == "stop":
+        if _gate(f"arc:{i}", ("arc", item)) == "stop":
             return rows
-        if action == "skip":
-            continue
-        out = _ask_mc(client, item["question"], item["texts"], max_tokens=mt)
-        pred = out["pred"]
-        gold = arc_answer_letter(item)
-        rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
-    for i, item in select_indexed_by_indices(read_jsonl("tiny_hellaswag.jsonl"), hellaswag_limit, KNOWLEDGE_CHALLENGE_INDICES["hellaswag"]):
-        key = f"hellaswag:{i}"
-        action = _take(session, "knowledge", key, rows)
-        if action == "stop":
+    for i, item in select_indexed_by_indices(
+        read_jsonl("tiny_hellaswag.jsonl"), hellaswag_limit, KNOWLEDGE_CHALLENGE_INDICES["hellaswag"]
+    ):
+        if _gate(f"hellaswag:{i}", ("hellaswag", item)) == "stop":
             return rows
-        if action == "skip":
-            continue
-        out = _ask_mc(client, item["ctx"] + "\n\nWhich ending is best?", item["endings"], max_tokens=mt)
-        pred = out["pred"]
-        gold = choice_letter(int(item["answer"]))
-        rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
-    for i, item in select_indexed_by_indices(read_jsonl("tiny_winogrande.jsonl"), winogrande_limit, KNOWLEDGE_CHALLENGE_INDICES["winogrande"]):
-        key = f"winogrande:{i}"
-        action = _take(session, "knowledge", key, rows)
-        if action == "stop":
+    for i, item in select_indexed_by_indices(
+        read_jsonl("tiny_winogrande.jsonl"), winogrande_limit, KNOWLEDGE_CHALLENGE_INDICES["winogrande"]
+    ):
+        if _gate(f"winogrande:{i}", ("winogrande", item)) == "stop":
             return rows
-        if action == "skip":
-            continue
+
+    def work(payload: Any) -> dict[str, Any]:
+        kind, item = payload
+        if kind == "mmlu":
+            out = _ask_mc(client, item["question"], item["choices"], max_tokens=mt)
+            pred = out["pred"]
+            gold = choice_letter(int(item["answer"]))
+            return _row(out, ok=pred == gold, pred=pred, gold=gold)
+        if kind == "arc":
+            out = _ask_mc(client, item["question"], item["texts"], max_tokens=mt)
+            pred = out["pred"]
+            gold = arc_answer_letter(item)
+            return _row(out, ok=pred == gold, pred=pred, gold=gold)
+        if kind == "hellaswag":
+            out = _ask_mc(client, item["ctx"] + "\n\nWhich ending is best?", item["endings"], max_tokens=mt)
+            pred = out["pred"]
+            gold = choice_letter(int(item["answer"]))
+            return _row(out, ok=pred == gold, pred=pred, gold=gold)
         stem = item["sentence"].replace("_", "_____")
         out = _ask_mc(client, stem, [item["option1"], item["option2"]], max_tokens=mt)
         pred = out["pred"]
         gold = "A" if str(item["answer"]) == "1" else "B"
-        rows.append(_emit(session, "knowledge", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
+        return _row(out, ok=pred == gold, pred=pred, gold=gold)
+
+    run_pending(session, "knowledge", pending, work, rows)
     return rows
 
 
@@ -304,6 +308,7 @@ def run_math(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("math", DEFAULT_BUDGETS["math"])
     rows = []
+    pending: list[tuple[str, Any]] = []
     for i, item in select_indexed_by_indices(read_jsonl("tiny_gsm8k.jsonl"), limit, MATH_CHALLENGE_INDICES):
         key = f"gsm:{i}"
         action = _take(session, "math", key, rows)
@@ -311,6 +316,9 @@ def run_math(
             return rows
         if action == "skip":
             continue
+        pending.append((key, item))
+
+    def work(item: Any) -> dict[str, Any]:
         out = client.complete(
             item["question"] + "\n\nEnd with #### <number> and nothing after.",
             max_tokens=mt,
@@ -319,14 +327,9 @@ def run_math(
         out["parse_confidence"] = conf
         out["raw_text"] = out["text"] or ""
         gold, _ = extract_gsm_number_conf(item["answer"])
-        rows.append(
-            _emit(
-                session,
-                "math",
-                key,
-                _row(out, ok=pred == gold and pred is not None, pred=pred, gold=gold),
-            )
-        )
+        return _row(out, ok=pred == gold and pred is not None, pred=pred, gold=gold)
+
+    run_pending(session, "math", pending, work, rows)
     return rows
 
 
@@ -338,6 +341,7 @@ def run_truth(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("truth", DEFAULT_BUDGETS["truth"])
     rows = []
+    pending: list[tuple[str, Any]] = []
     for i, item in select_indexed_by_indices(read_jsonl("tiny_truthfulqa.jsonl"), limit, TRUTH_CHALLENGE_INDICES):
         key = f"tqa:{i}"
         action = _take(session, "truth", key, rows)
@@ -345,10 +349,15 @@ def run_truth(
             return rows
         if action == "skip":
             continue
+        pending.append((key, item))
+
+    def work(item: Any) -> dict[str, Any]:
         out = _ask_mc(client, item["question"], item["choices"], max_tokens=mt)
         pred = out["pred"]
         gold = choice_letter(int(item["answer"]))
-        rows.append(_emit(session, "truth", key, _row(out, ok=pred == gold, pred=pred, gold=gold)))
+        return _row(out, ok=pred == gold, pred=pred, gold=gold)
+
+    run_pending(session, "truth", pending, work, rows)
     return rows
 
 
@@ -360,6 +369,7 @@ def run_instruct(
 ) -> list[dict]:
     mt = (budgets or DEFAULT_BUDGETS).get("instruct", DEFAULT_BUDGETS["instruct"])
     rows = []
+    pending: list[tuple[str, Any]] = []
     for item in select_by_indices(read_jsonl("ifeval_100.jsonl"), limit, INSTRUCT_CHALLENGE_INDICES):
         key = f"ifeval:{item.get('key')}"
         action = _take(session, "instruct", key, rows)
@@ -367,26 +377,24 @@ def run_instruct(
             return rows
         if action == "skip":
             continue
+        pending.append((key, item))
+
+    def work(item: Any) -> dict[str, Any]:
         out = client.complete(item["prompt"], max_tokens=mt)
         text = out["text"] or ""
         ok = item_ok(item, text)
         out["parse_confidence"] = "not_applicable"
-        rows.append(
-            _emit(
-                session,
-                "instruct",
-                key,
-                _row(
-                    out,
-                    ok=ok,
-                    pred=text[:120],
-                    prompt=item.get("prompt") or "",
-                    instruction_id_list=copy.deepcopy(item.get("instruction_id_list") or []),
-                    kwargs=copy.deepcopy(item.get("kwargs") or []),
-                    grader={"name": "ifeval-local", "item_key": item.get("key")},
-                ),
-            )
+        return _row(
+            out,
+            ok=ok,
+            pred=text[:120],
+            prompt=item.get("prompt") or "",
+            instruction_id_list=copy.deepcopy(item.get("instruction_id_list") or []),
+            kwargs=copy.deepcopy(item.get("kwargs") or []),
+            grader={"name": "ifeval-local", "item_key": item.get("key")},
         )
+
+    run_pending(session, "instruct", pending, work, rows)
     return rows
 
 

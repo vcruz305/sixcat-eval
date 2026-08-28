@@ -129,11 +129,12 @@ def _tool_answer_ok(want: Any, tool_calls: list[Any], text: str) -> tuple[bool, 
 
 
 def run_tools(client, limit: int | None, session=None, max_tokens: int | None = None) -> list[dict]:
-    from .journal import apply_item_gate, emit
+    from .journal import apply_item_gate, run_pending
 
     mt = 256 if max_tokens is None else max_tokens
     items = ITEMS if limit is None else ITEMS[:limit]
     rows = []
+    pending = []
     for name, want, prompt in items:
         key = f"tool:{name}"
         action = apply_item_gate(session, "tools", key, rows)
@@ -141,29 +142,28 @@ def run_tools(client, limit: int | None, session=None, max_tokens: int | None = 
             return rows
         if action == "skip":
             continue
+        pending.append((key, (name, want, prompt)))
+
+    def work(payload):
+        name, want, prompt = payload
         out = client.complete(prompt, max_tokens=mt, tools=TOOLS)
         ok, pred = _tool_answer_ok(want, out["tool_calls"], out["text"] or "")
         usage = out.get("usage") or {}
-        rows.append(
-            emit(
-                session,
-                "tools",
-                key,
-                {
-                    "ok": ok,
-                    "pred": pred,
-                    "gold": want,
-                    "raw_text": out["text"] or "",
-                    "reasoning_content": out.get("reasoning_content") or "",
-                    "tool_calls": copy.deepcopy(out["tool_calls"]),
-                    "parse_confidence": "not_applicable",
-                    "prompt": prompt,
-                    "grader": {"name": "structured-tool-call", "item": name},
-                    "finish": out.get("finish"),
-                    "ctok": usage.get("completion_tokens"),
-                    "ptok": usage.get("prompt_tokens"),
-                    "request_params": out.get("request_params"),
-                },
-            )
-        )
+        return {
+            "ok": ok,
+            "pred": pred,
+            "gold": want,
+            "raw_text": out["text"] or "",
+            "reasoning_content": out.get("reasoning_content") or "",
+            "tool_calls": copy.deepcopy(out["tool_calls"]),
+            "parse_confidence": "not_applicable",
+            "prompt": prompt,
+            "grader": {"name": "structured-tool-call", "item": name},
+            "finish": out.get("finish"),
+            "ctok": usage.get("completion_tokens"),
+            "ptok": usage.get("prompt_tokens"),
+            "request_params": out.get("request_params"),
+        }
+
+    run_pending(session, "tools", pending, work, rows)
     return rows

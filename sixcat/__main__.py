@@ -161,6 +161,12 @@ def _run_main(argv: list[str]) -> int:
         help="Operator context override in tokens. Recorded as configured, not detected. Does not change scoring or --max-minutes.",
     )
     p.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="In-flight scored items (llama-server -np should be >= this). Default 1. Not part of journal identity.",
+    )
+    p.add_argument(
         "--skip-code-exec",
         action="store_true",
         help="Skip HumanEval model-code execution (enabled by default in a guarded host subprocess).",
@@ -200,6 +206,8 @@ def _run_main(argv: list[str]) -> int:
         p.error("--request-timeout must be positive")
     if args.ctx is not None and args.ctx <= 0:
         p.error("--ctx must be a positive token count")
+    if args.concurrency < 1:
+        p.error("--concurrency must be >= 1")
 
     try:
         budgets = parse_budget_overrides(args.budget)
@@ -289,8 +297,12 @@ def _run_main(argv: list[str]) -> int:
             retry_failed=args.retry in {"failed", "incomplete"},
             include_remaining=args.retry != "failed",
             retry_mode=args.retry,
+            concurrency=args.concurrency,
         )
-        print(f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes}", flush=True)
+        print(
+            f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={args.concurrency}",
+            flush=True,
+        )
         try:
             client = ChatClient(
                 args.base_url,
