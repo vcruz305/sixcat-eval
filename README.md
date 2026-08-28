@@ -41,7 +41,7 @@ fail. GLM-5.x vendor pre-closes think so Q2 GGUFs emit an answer. See
   `n/a` if omitted) and flags `trunc_in_think`. Works with `llama-server`, vLLM, Ollama, and other
   OpenAI-compatible servers.
 
-Point it at any OpenAI-compatible server (`llama-server`, vLLM, Ollama). It prints:
+Point it at any OpenAI-compatible server (`llama-server`, vLLM, Ollama), **or** drive completions from a coding harness over **stdio** (`--transport stdio`; see [docs/harness-stdio.md](docs/harness-stdio.md)). It prints:
 
 ```text
 model: example-model

@@ -190,7 +190,7 @@ class TestBothCliCombinedReport(unittest.TestCase):
         from sixcat.__main__ import main
         from sixcat.run import CATEGORIES
 
-        def make_client(base_url, model, policy, api_key="none", timeout=180.0):
+        def make_client(base_url, model, policy, api_key="none", timeout=180.0, **kwargs):
             return SimpleNamespace(base_url=base_url, model=model, policy=policy, api_key=api_key)
 
         def result_for(client, *args, **kwargs):

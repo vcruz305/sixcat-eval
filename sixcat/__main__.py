@@ -52,8 +52,9 @@ def _journal_identity(
     limit: int | None,
     request_timeout: float,
     skip_code_exec: bool,
+    transport: str = "openai",
 ) -> dict:
-    return {
+    identity = {
         "result_schema": RESULT_SCHEMA,
         "parser": PARSER_VERSION,
         "model": model,
@@ -68,6 +69,9 @@ def _journal_identity(
         "request_timeout_seconds": float(request_timeout),
         "code_execution": "disabled" if skip_code_exec else "host-guarded",
     }
+    if (transport or "openai") != "openai":
+        identity["transport"] = transport
+    return identity
 
 
 def _label_path(path: Path, label: str, *, default_suffix: str) -> Path:
@@ -167,6 +171,12 @@ def _run_main(argv: list[str]) -> int:
         help="In-flight scored items (llama-server -np should be >= this). Default 1. Not part of journal identity.",
     )
     p.add_argument(
+        "--transport",
+        choices=("openai", "stdio"),
+        default="openai",
+        help="openai = HTTP /v1/chat/completions. stdio = JSONL complete/answer on stdout/stdin for harnesses (ZCode, etc.).",
+    )
+    p.add_argument(
         "--skip-code-exec",
         action="store_true",
         help="Skip HumanEval model-code execution (enabled by default in a guarded host subprocess).",
@@ -208,6 +218,12 @@ def _run_main(argv: list[str]) -> int:
         p.error("--ctx must be a positive token count")
     if args.concurrency < 1:
         p.error("--concurrency must be >= 1")
+    if args.transport == "stdio" and args.concurrency != 1:
+        p.error("--transport stdio requires --concurrency 1")
+    protocol_out = sys.stdout
+    if args.transport == "stdio":
+        args.base_url = "stdio://harness"
+        sys.stdout = sys.stderr
 
     try:
         budgets = parse_budget_overrides(args.budget)
@@ -283,6 +299,7 @@ def _run_main(argv: list[str]) -> int:
             limit=limit,
             request_timeout=args.request_timeout,
             skip_code_exec=args.skip_code_exec,
+            transport=args.transport,
         )
         if args.retry and not Path(log_path).exists():
             p.error(f"--retry requires an existing journal at {log_path}")
@@ -310,6 +327,9 @@ def _run_main(argv: list[str]) -> int:
                 policy,
                 api_key=args.api_key,
                 timeout=args.request_timeout,
+                transport=args.transport,
+                stdio_in=sys.stdin if args.transport == "stdio" else None,
+                stdio_out=protocol_out if args.transport == "stdio" else None,
             )
             result = run_battery(
                 client,

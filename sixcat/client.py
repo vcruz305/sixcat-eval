@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from typing import Any
 
 from .policy import Policy
@@ -189,12 +191,18 @@ class ChatClient:
         policy: Policy,
         api_key: str = "none",
         timeout: float = 180.0,
+        transport: str = "openai",
+        stdio_in=None,
+        stdio_out=None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.policy = policy
         self.api_key = api_key
         self.timeout = timeout
+        self.transport = transport or "openai"
+        self.stdio_in = stdio_in
+        self.stdio_out = stdio_out
 
     def complete(
         self,
@@ -228,6 +236,8 @@ class ChatClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if self.transport == "stdio":
+            return self._complete_stdio(payload, request_params)
         req = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload).encode(),
@@ -276,6 +286,79 @@ class ChatClient:
                 "completion_tokens_details": usage.get("completion_tokens_details"),
             },
             **timings,
+            "wall_s": wall_s,
+            "wall_tps": wall_tps,
+            "request_params": request_params,
+            "raw": data,
+        }
+
+    def _complete_stdio(self, payload: dict[str, Any], request_params: dict[str, Any]) -> dict[str, Any]:
+        """Ask a harness for one completion. Protocol JSONL on stdio; never log secrets."""
+        req_id = uuid.uuid4().hex
+        messages = payload.get("messages") or []
+        prompt = ""
+        if messages:
+            prompt = str(messages[0].get("content") or "")
+        msg = {
+            "op": "complete",
+            "id": req_id,
+            "model": self.model,
+            "prompt": prompt,
+            "max_tokens": payload.get("max_tokens"),
+            "tools": payload.get("tools"),
+            "request_params": dict(request_params),
+        }
+        out = self.stdio_out if self.stdio_out is not None else sys.stdout
+        inp = self.stdio_in if self.stdio_in is not None else sys.stdin
+        started = time.perf_counter()
+        out.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        out.flush()
+        line = inp.readline()
+        if not line:
+            raise RuntimeError("stdio transport: harness closed stdin before answering")
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"stdio transport: harness sent non-JSON: {line[:200]!r}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("stdio transport: harness answer must be a JSON object")
+        if data.get("id") not in (None, req_id):
+            raise RuntimeError(f"stdio transport: id mismatch {data.get('id')!r} != {req_id}")
+        wall_s = time.perf_counter() - started
+        text = data.get("text")
+        if text is None:
+            text = data.get("content") or ""
+        text = text if isinstance(text, str) else str(text)
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        completion_tokens = usage.get("completion_tokens")
+        wall_tps = None
+        if (
+            isinstance(completion_tokens, (int, float))
+            and not isinstance(completion_tokens, bool)
+            and wall_s > 0
+        ):
+            wall_tps = float(completion_tokens) / wall_s
+        fake_msg = {
+            "content": text,
+            "reasoning_content": data.get("reasoning_content") or "",
+            "tool_calls": data.get("tool_calls") or [],
+        }
+        reasoning, reasoning_meta = _reasoning_from_message(fake_msg, data)
+        return {
+            "text": text,
+            "tool_calls": fake_msg["tool_calls"],
+            "finish": data.get("finish") or data.get("finish_reason"),
+            "reasoning_content": reasoning,
+            "reasoning_tokens": reasoning_meta["reasoning_tokens"],
+            "reasoning_details": reasoning_meta["reasoning_details"],
+            "thinking_field": reasoning_meta["thinking_field"],
+            "usage": {
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": completion_tokens,
+                "reasoning_tokens": reasoning_meta["reasoning_tokens"],
+                "completion_tokens_details": usage.get("completion_tokens_details"),
+            },
+            **extract_server_timings(data),
             "wall_s": wall_s,
             "wall_tps": wall_tps,
             "request_params": request_params,
