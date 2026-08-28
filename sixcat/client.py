@@ -214,6 +214,8 @@ class ChatClient:
                 request_params[key] = value
         request_params.update(self.policy.extra)
         template_kwargs: dict[str, Any] = {"enable_thinking": self.policy.thinking}
+        if request_params.pop("preclose_think", False):
+            template_kwargs["enable_thinking"] = False
         effort = self.policy.extra.get("reasoning_effort")
         if effort is not None:
             template_kwargs["reasoning_effort"] = effort

@@ -592,7 +592,11 @@ class TestPolicyResolution(unittest.TestCase):
         self.assertEqual(captured["reasoning_effort"], "high")
         self.assertEqual(
             captured["chat_template_kwargs"],
-            {"enable_thinking": True, "reasoning_effort": "high"},
+            {"enable_thinking": False, "reasoning_effort": "high"},
+        )
+        self.assertEqual(
+            captured["stop"],
+            ["<|system|>", "<|user|>", "<|end|>", "<|eot|>", "<|eot_id|>", "<|endoftext|>"],
         )
 
     def test_vendor_catalog_entries_are_reviewed_citations(self):
