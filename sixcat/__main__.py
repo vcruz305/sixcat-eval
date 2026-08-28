@@ -151,8 +151,8 @@ def _run_main(argv: list[str]) -> int:
     p.add_argument(
         "--request-timeout",
         type=float,
-        default=180.0,
-        help="Per-request HTTP timeout in seconds. Default 180; raise for long thinking completions.",
+        default=1800.0,
+        help="Per-request HTTP timeout in seconds. Default 1800 for long thinking completions.",
     )
     p.add_argument(
         "--ctx",

@@ -110,6 +110,26 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return s[lo] + (s[hi] - s[lo]) * frac
 
 
+def answer_tokens(ctok: Any, rtok: Any) -> int | None:
+    """Answer tokens from API split. Never invent a char/4 estimate."""
+    if isinstance(ctok, bool) or isinstance(rtok, bool):
+        return None
+    if not isinstance(ctok, int) or not isinstance(rtok, int):
+        return None
+    if ctok < 0 or rtok < 0:
+        return None
+    return max(ctok - rtok, 0)
+
+
+def is_trunc_in_think(row: Mapping[str, Any]) -> bool:
+    """True when generation hit max_tokens still inside the think channel."""
+    if row.get("finish") != "length":
+        return False
+    text = str(row.get("raw_text") or row.get("pred") or "").strip()
+    reason = str(row.get("reasoning_content") or "")
+    return text == "" and bool(reason)
+
+
 def category_stats(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Phase 1 (sixcat v2.1): score plus the provenance a bare percentage hides —
     truncation and completion-token distribution, and (once Phase 2 lands) parser
@@ -119,12 +139,16 @@ def category_stats(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     n = len(rows)
     score = category_score(rows)
     truncated = sum(1 for r in rows if r.get("finish") == "length")
+    trunc_in_think = sum(1 for r in rows if is_trunc_in_think(r))
+    empty_answer = sum(1 for r in rows if not str(r.get("pred") or "").strip())
     loop_failures = sum(1 for r in rows if is_loop_failure(r))
     high_conf = sum(1 for r in rows if r.get("parse_confidence") == "high")
     low_conf = sum(1 for r in rows if r.get("parse_confidence") == "low")
     not_applicable = sum(1 for r in rows if r.get("parse_confidence") == "not_applicable")
     missing_conf = sum(1 for r in rows if r.get("parse_confidence") not in PARSE_CONFIDENCE_VALUES)
-    ctoks = [r["ctok"] for r in rows if isinstance(r.get("ctok"), (int, float))]
+    ctoks = [r["ctok"] for r in rows if isinstance(r.get("ctok"), (int, float)) and not isinstance(r.get("ctok"), bool)]
+    rtoks = [int(r["rtok"]) for r in rows if isinstance(r.get("rtok"), int) and not isinstance(r.get("rtok"), bool)]
+    atoks = [int(r["atok"]) for r in rows if isinstance(r.get("atok"), int) and not isinstance(r.get("atok"), bool)]
     prefill = [float(r["prefill_tps"]) for r in rows if isinstance(r.get("prefill_tps"), (int, float))]
     decode = [float(r["decode_tps"]) for r in rows if isinstance(r.get("decode_tps"), (int, float))]
     speed = speed_from_rows(rows)
@@ -132,6 +156,8 @@ def category_stats(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "score": score,
         "n": n,
         "truncated": truncated,
+        "trunc_in_think": trunc_in_think,
+        "empty_answer": empty_answer,
         "loop_failures": loop_failures,
         "parse_high_confidence": high_conf,
         "parse_low_confidence": low_conf,
@@ -140,6 +166,10 @@ def category_stats(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "ctok_p50": _percentile(ctoks, 0.50),
         "ctok_p95": _percentile(ctoks, 0.95),
         "ctok_max": max(ctoks) if ctoks else None,
+        "rtok_sum": sum(rtoks) if rtoks else None,
+        "atok_sum": sum(atoks) if atoks else None,
+        "rtok_p50": _percentile([float(v) for v in rtoks], 0.50),
+        "atok_p50": _percentile([float(v) for v in atoks], 0.50),
         "speed_n": min(len(prefill), len(decode)),
         "prefill_tps_p50": _percentile(prefill, 0.50),
         "prefill_tps_p95": _percentile(prefill, 0.95),

@@ -30,6 +30,18 @@ THINKING_BUDGETS: dict[str, int] = {
     "tools": 768,
 }
 
+# sixcat 0.5: thinking-on uses task-shaped safety ceilings, not the Qwen/Ornith p95
+# table above. THINKING_BUDGETS stays as the 0.4.x fingerprint / calibration receipt.
+SAFETY_CEILING = 32768
+TASK_CEILINGS: dict[str, int] = {
+    "knowledge": 8192,
+    "math": 16384,
+    "truth": 8192,
+    "instruct": 32768,
+    "code": 32768,
+    "tools": 16384,
+}
+
 VENDOR_DEFAULT_SEED = 1
 
 DEFAULT_POLICY_FILE = Path(__file__).with_name("model-policies.json")
@@ -175,7 +187,7 @@ def custom_policy(
     budget_overrides: dict[str, int] | None = None,
 ) -> Policy:
     """Build an explicit user-selected sampling policy without hidden defaults."""
-    base_budgets = THINKING_BUDGETS if thinking else STRICT_BUDGETS
+    base_budgets = TASK_CEILINGS if thinking else STRICT_BUDGETS
     return Policy(
         name="custom",
         temperature=temperature,
@@ -191,8 +203,8 @@ def custom_policy(
 
 def override_thinking(policy: Policy, enabled: bool) -> Policy:
     """Apply an explicit thinking choice while preserving sampling controls."""
-    source_defaults = THINKING_BUDGETS if policy.thinking else STRICT_BUDGETS
-    target_defaults = THINKING_BUDGETS if enabled else STRICT_BUDGETS
+    source_defaults = TASK_CEILINGS if policy.thinking else STRICT_BUDGETS
+    target_defaults = TASK_CEILINGS if enabled else STRICT_BUDGETS
     explicit_overrides = {
         category: value
         for category, value in policy.budgets.items()
@@ -279,7 +291,7 @@ def _load_policy_entries(policy_file: Path | None) -> tuple[list[dict[str, Any]]
                 top_k=entry["top_k"],
                 min_p=entry["min_p"],
                 thinking=entry["thinking"],
-                budgets={**THINKING_BUDGETS, **(entry.get("budgets") or {})},
+                budgets={**TASK_CEILINGS, **(entry.get("budgets") or {})},
                 extra=entry["extra"],
                 source=f"validation:{entry['family']}",
             )
@@ -365,7 +377,7 @@ def _vendor_policy_from_entry(
             f"vendor:{entry['family']}|adopted-for={model}"
             f"|source={source_url}|reviewed={entry['reviewed_date']}"
         )
-    base_budgets = THINKING_BUDGETS if entry["thinking"] else STRICT_BUDGETS
+    base_budgets = TASK_CEILINGS if entry["thinking"] else STRICT_BUDGETS
     return Policy(
         name="vendor",
         temperature=entry["temperature"],

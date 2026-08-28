@@ -168,13 +168,13 @@ class TestPolicyValue(unittest.TestCase):
         self.assertNotIn("seed", policy.extra)
 
     def test_thinking_override_is_explicit_and_uses_reasoning_budgets(self):
-        from sixcat.policy import override_thinking, strict_policy
+        from sixcat.policy import TASK_CEILINGS, override_thinking, strict_policy
 
         policy = override_thinking(strict_policy(), True)
 
         self.assertTrue(policy.thinking)
         self.assertEqual(policy.temperature, 0.0)
-        self.assertEqual(policy.budgets["instruct"], 6767)
+        self.assertEqual(policy.budgets["instruct"], TASK_CEILINGS["instruct"])
         self.assertIn("thinking=on:user", policy.source)
 
     def test_thinking_off_override_restores_non_reasoning_budgets(self):
@@ -425,7 +425,7 @@ class TestPolicyResolution(unittest.TestCase):
         self.assertEqual(THINKING_BUDGETS, expected)
 
     def test_reviewed_vendor_mappings_resolve_qwen_and_ornith(self):
-        from sixcat.policy import resolve_policy
+        from sixcat.policy import TASK_CEILINGS, resolve_policy
 
         qwen = resolve_policy("vendor", "Qwen3.8-27B-Q4_K_M", seed=2)
         ornith = resolve_policy("vendor", "ornith-nomtp", seed=3)
@@ -442,16 +442,8 @@ class TestPolicyResolution(unittest.TestCase):
         )
         self.assertEqual(ornith.extra["seed"], 3)
         self.assertIn("huggingface.co/ornith-ai/Ornith-1.5-35B-A3B", ornith.source)
-        expected_budgets = {
-            "knowledge": 1597,
-            "math": 2048,
-            "truth": 1892,
-            "instruct": 6767,
-            "code": 3072,
-            "tools": 768,
-        }
-        self.assertEqual(dict(qwen.budgets), expected_budgets)
-        self.assertEqual(dict(ornith.budgets), expected_budgets)
+        self.assertEqual(dict(qwen.budgets), TASK_CEILINGS)
+        self.assertEqual(dict(ornith.budgets), TASK_CEILINGS)
 
     def test_vendor_catalog_resolves_published_families(self):
         from sixcat.policy import resolve_policy
@@ -773,10 +765,10 @@ class TestPolicyResolution(unittest.TestCase):
                 seed=1,
             )
 
-        self.assertEqual(policy.budgets["knowledge"], 1597)
+        self.assertEqual(policy.budgets["knowledge"], 8192)
         self.assertEqual(policy.budgets["math"], 2304)
-        self.assertEqual(policy.budgets["truth"], 1892)
-        self.assertEqual(policy.budgets["instruct"], 6767)
+        self.assertEqual(policy.budgets["truth"], 8192)
+        self.assertEqual(policy.budgets["instruct"], 32768)
         self.assertEqual(policy.budgets["tools"], 900)
         self.assertEqual(policy.budgets["code"], 4096)
 

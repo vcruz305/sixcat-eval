@@ -13,6 +13,7 @@ from .policy import STRICT_BUDGETS, family_from_source, probe_policy
 from .report import PARSER_VERSION, RESULT_SCHEMA
 from .score import (
     CATEGORIES,
+    answer_tokens,
     category_score,
     category_stats,
     extract_gsm_number_conf,
@@ -180,6 +181,11 @@ def _row(out: dict[str, Any], **extra: Any) -> dict[str, Any]:
     row["finish"] = out.get("finish")
     row["ctok"] = usage.get("completion_tokens")
     row["ptok"] = usage.get("prompt_tokens")
+    rtok = usage.get("reasoning_tokens")
+    if rtok is None:
+        rtok = out.get("reasoning_tokens")
+    row["rtok"] = rtok
+    row["atok"] = answer_tokens(row.get("ctok"), rtok)
     row["request_params"] = out.get("request_params")
     if "parse_confidence" in out:
         row["parse_confidence"] = out["parse_confidence"]
@@ -391,6 +397,8 @@ def build_overall_flags(stats: dict[str, dict[str, Any]]) -> list[str]:
         category_stats = stats.get(category) or {}
         if category_stats.get("truncated"):
             flags.append(f"truncated:{category}")
+        if category_stats.get("trunc_in_think"):
+            flags.append(f"trunc-in-think:{category}")
     for category in CATEGORIES:
         category_stats = stats.get(category) or {}
         if category_stats.get("loop_failures"):
@@ -581,6 +589,41 @@ def render_table(result: dict) -> str:
         suite_cell = f"{suite_tps:.1f}" if isinstance(suite_tps, (int, float)) else "n/a"
         mean_cell = f"{tps_mean:.1f}" if isinstance(tps_mean, (int, float)) else "n/a"
         lines.append(f"speed: {ctok_cell} ctok / {wall_cell}  suite_tps {suite_cell}  mean {mean_cell}")
+    tok_header = f"{'tokens':<12} {'rtok':>8} {'atok':>8} {'empty':>6} {'think':>6}"
+    lines.extend(["", tok_header, "-" * len(tok_header)])
+    total_rtok = 0
+    total_atok = 0
+    saw_rtok = False
+    saw_atok = False
+    any_think_trunc = False
+    for k in CATEGORIES:
+        category_stats = stats.get(k) or {}
+        rtok = category_stats.get("rtok_sum")
+        atok = category_stats.get("atok_sum")
+        empty = category_stats.get("empty_answer") or 0
+        think_trunc = category_stats.get("trunc_in_think") or 0
+        if think_trunc:
+            any_think_trunc = True
+        if isinstance(rtok, int):
+            total_rtok += rtok
+            saw_rtok = True
+            rtok_cell = f"{rtok:8d}"
+        else:
+            rtok_cell = "     n/a"
+        if isinstance(atok, int):
+            total_atok += atok
+            saw_atok = True
+            atok_cell = f"{atok:8d}"
+        else:
+            atok_cell = "     n/a"
+        lines.append(f"{k:<12} {rtok_cell} {atok_cell} {empty:6d} {think_trunc:6d}")
+    rtok_tot = f"{total_rtok}" if saw_rtok else "n/a"
+    atok_tot = f"{total_atok}" if saw_atok else "n/a"
+    lines.append(f"tokens: rtok={rtok_tot} atok={atok_tot}  (API split; n/a if engine omitted reasoning_tokens)")
+    if any_think_trunc:
+        lines.append(
+            "WARNING: trunc_in_think>0 — answer channel empty at max_tokens; overall is not comparable to an untruncated run"
+        )
     if result.get("timed_out"):
         lines.append("stopped: time limit")
     continuation = result.get("continuation") or {}

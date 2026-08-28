@@ -1,3 +1,23 @@
+# Sixcat 0.5.0 Release Notes
+
+**Release date:** 2026-08-27
+
+**Previous release:** 0.4.6
+
+**Status:** final release
+
+Thinking-on no longer uses the Qwen/Ornith p95 token table as a score cap.
+Vendor/custom thinking policies use task-shaped safety ceilings (knowledge 8192,
+math 16384, truth 8192, instruct/code 32768, tools 16384). The old
+`THINKING_BUDGETS` table remains as the 0.4.x calibration receipt.
+
+Score table adds reasoning vs answer token columns (`rtok` / `atok`) when the
+engine reports `usage.reasoning_tokens`. Missing splits print `n/a` — never a
+character estimate. `trunc_in_think` flags empty answer channel at
+`finish=length`. Default `--request-timeout` is 1800s.
+
+Think-on 0.5 scores are not comparable to 0.4.6 think-on cards.
+
 # Sixcat 0.4.6 Release Notes
 
 **Release date:** 2026-08-27
