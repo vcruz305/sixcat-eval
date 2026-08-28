@@ -4,6 +4,14 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
+**0.5.1 release:** `--transport stdio` lets a coding harness (ZCode, Claude
+Code, Codex, …) answer Sixcat's raw requests directly when the model has no
+exportable key — first validated end-to-end by a real 120-item run that
+cross-validated the offline scorer item for item. HumanEval runs keep
+prompt-provided helpers when the completion restates the entry def, and stdio
+receipts are now retryable. See [RELEASE_NOTES.md](RELEASE_NOTES.md) and
+[docs/harness-stdio.md](docs/harness-stdio.md).
+
 **0.5.0 release:** thinking-on uses task-shaped safety ceilings instead of
 the Qwen/Ornith p95 table (knowledge 8192, not 1597). The score sheet reports
 `rtok`/`atok` when the engine splits them, and empty truncated think is a

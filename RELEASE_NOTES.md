@@ -1,3 +1,88 @@
+# Sixcat 0.5.1 Release Notes
+
+**Release date:** 2026-08-28
+
+**Previous release:** 0.5.0
+
+**Status:** final release
+
+Sixcat 0.5.1 makes `--transport stdio` a first-class, field-validated way to
+benchmark a model that has no exportable API key, fixes a HumanEval runner
+bug that silently failed canonical items, and makes stdio receipts retryable.
+A self-administered GLM-5.3-Flash run (overall 91.7, 120 items) cross-validated
+the offline scorer and the stdio transport item for item.
+
+## Harness-driven completions over stdio (field-validated)
+
+`--transport stdio` (new in 0.5.1) lets ZCode, Claude Code, Codex, or any
+coding harness answer Sixcat's JSONL `complete` requests on stdin while all
+grading, journaling, and identity handling stay inside Sixcat. This is the
+supported path for cloud models that are reachable only *inside* a harness —
+the receipt carries `transport=stdio` and `base_url=stdio://harness`, and it
+cannot silently mix with an OpenAI/llama.cpp journal.
+
+The 0.5.1 release was validated by the first end-to-end stdio battery run:
+121 requests (1 unscored policy probe + 120 scored items) driven through the
+protocol, with every scored prompt hash-matched against a blind answer sheet.
+The official stdio receipt reproduced the independent offline replay exactly:
+knowledge 60.0 / math 100.0 / truth 95.0 / instruct 95.0 / code 100.0 /
+tools 100.0, overall[vendor] 91.7. The run produced `docs/harness-stdio.md`'s
+new **Driver requirements** section — answer the policy probe, drain stderr
+concurrently (stdout-sequential drivers deadlock), apply `request_params` to
+the raw model call, send `finish:"length"` on truncation, and set
+`PYTHONIOENCODING=utf-8` on Windows.
+
+## HumanEval: prompt helpers survive restated entry defs
+
+The runner truncated everything before a restated entry-point `def`, silently
+discarding prompt-provided helpers. For HumanEval/32 (`find_zero`, which relies
+on the prompt's `poly()` helper) that was a guaranteed `NameError` for any
+model that restates the signature — most of them. The runner now concatenates
+`prompt + completion` (a restated def simply overrides the stub) and falls back
+to the historical truncation only when concatenation cannot be guarded.
+
+## stdio receipts are retryable
+
+Saved results now record `transport`, and `sixcat run retry-plan` emits
+`--transport stdio` for stdio receipts. Previously the documented retry flow
+regenerated an OpenAI-transport argv that could never resume a stdio journal.
+
+## Data-lint suite and upstream anchor audit
+
+`tests/test_data_lint.py` adds ten invariants over the shipped data: MC answer
+keys within choice range per real schema (MMLU / ARC / HellaSwag / WinoGrande /
+TruthfulQA), GSM8K `####` extractability, every shipped IFEval instruction id
+implemented (the "unknown id fails closed" contract), kwargs alignment, tool
+expectation shapes, and challenge-selection indices referencing live rows.
+
+Three suspicious battery items were verified against upstream and are
+**deliberately unpatched** for anchor comparability; see
+`docs/eval-run-findings.md`: the google/IFEval letter-o prompt/grader
+contradiction, tinyTruthfulQA's "Haslam." key, and the malformed tinyMMLU
+"Cultural homogenization." stem. A future `challenge-v2-clean` selection
+profile is the supported way to skip them.
+
+## Docs and skill
+
+- `docs/harness-stdio.md`: driver requirements, tool-call answer shape,
+  retry/`--ctx` notes.
+- `.hermes` skill bumped to 0.5.0 with a fourth target choice — harness-driven
+  stdio — for models reachable only inside the harness.
+- README documents `--policy-family` and `--concurrency`.
+
+## Upgrade
+
+```bash
+git fetch origin --tags && git checkout v0.5.1
+python -m pip install -e .
+python -m pytest -q   # 292 passed, 179 subtests
+```
+
+Think-on 0.5.x scores remain comparable within 0.5.x; the 0.5.0
+non-comparability break versus 0.4.x is unchanged.
+
+---
+
 # Sixcat 0.5.0 Release Notes
 
 **Release date:** 2026-08-28

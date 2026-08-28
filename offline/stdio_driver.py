@@ -4,9 +4,17 @@ Modes:
   capture  - spawn sixcat with stdio transport, auto-answer every request with a
              dummy completion, and record the full request stream (throwaway run).
   run      - spawn sixcat again with fresh out/log paths and answer each request
-             from answers.json, matched by prompt hash. Only the unscored policy
-             probe may be answered from the built-in fallback.
+             from the answers sheet, matched by prompt hash. Only the unscored
+             policy probe may be answered from the built-in fallback.
+
+Both modes accept overrides so new runs (different model id, fresh answer
+sheets, fresh receipt paths) do not have to overwrite earlier artifacts:
+
+  python stdio_driver.py capture --model glm-5.3 --prompts-out stdio_prompts_glm53.json
+  python stdio_driver.py run --model glm-5.3 --answers answers_glm53.json \
+      --out ../results/stdio-glm53.json --log ../results/stdio-glm53.jsonl
 """
+import argparse
 import hashlib
 import json
 import subprocess
@@ -23,11 +31,11 @@ def sha(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
 
-def spawn(mode: str, out_path: Path, log_path: Path):
+def spawn(mode: str, out_path: Path, log_path: Path, model: str = "glm-5.3-flash"):
     cmd = [
         sys.executable, "-m", "sixcat",
         "--transport", "stdio",
-        "--model", "glm-5.3-flash",
+        "--model", model,
         "--policy", "vendor",
         "--policy-family", "glm-5.x",
         "--limit", "20",
@@ -79,10 +87,22 @@ def serve(proc, answer_for):
 
 
 def main():
-    mode = sys.argv[1]
-    if mode == "capture":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mode", choices=["capture", "run"])
+    ap.add_argument("--model", default="glm-5.3-flash")
+    ap.add_argument("--prompts-out", default="stdio_prompts.json",
+                    help="capture: scored-request sheet to write (relative to offline/)")
+    ap.add_argument("--answers", default="answers.json",
+                    help="run: blind answer sheet to feed (relative to offline/)")
+    ap.add_argument("--out", default=None,
+                    help="run: result JSON path (relative to repo root); default results/stdio-glm53flash.json")
+    ap.add_argument("--log", default=None,
+                    help="run: journal JSONL path (relative to repo root); default alongside --out")
+    args = ap.parse_args()
+
+    if args.mode == "capture":
         with tempfile.TemporaryDirectory() as td:
-            proc, cmd = spawn("capture", Path(td) / "out.json", Path(td) / "log.jsonl")
+            proc, cmd = spawn("capture", Path(td) / "out.json", Path(td) / "log.jsonl", args.model)
             requests, rc, stderr = serve(proc, lambda req: {
                 "text": "A", "finish": "stop",
                 "usage": {"completion_tokens": 1, "prompt_tokens": 10},
@@ -92,19 +112,20 @@ def main():
         if rc != 0:
             sys.exit(1)
         scored = [r for r in requests if PROBE_SNIPPET not in r["prompt"]]
-        (HERE / "stdio_prompts.json").write_text(
+        (HERE / args.prompts_out).write_text(
             json.dumps(scored, indent=1, ensure_ascii=False), encoding="utf-8")
-        print("recorded", len(scored), "scored requests (probe excluded) -> stdio_prompts.json")
-    elif mode == "run":
-        prompts = json.loads((HERE / "prompts.json").read_text(encoding="utf-8"))
-        answers = json.loads((HERE / "answers.json").read_text(encoding="utf-8"))
+        print("recorded", len(scored), "scored requests (probe excluded) ->", args.prompts_out)
+    else:
+        answers = json.loads((HERE / args.answers).read_text(encoding="utf-8"))
         lookup = {}
-        for p, a in zip(prompts, answers):
-            lookup[sha(p["prompt"])] = a
+        for a in answers:
+            lookup[sha(a["prompt"])] = a
         results_dir = ROOT / "results"
         results_dir.mkdir(exist_ok=True)
-        out_path = results_dir / "stdio-glm53flash.json"
-        log_path = results_dir / "stdio-glm53flash.jsonl"
+        out_path = Path(args.out) if args.out else results_dir / "stdio-glm53flash.json"
+        out_path = out_path if out_path.is_absolute() else ROOT / out_path
+        log_path = Path(args.log) if args.log else out_path.with_suffix(".jsonl")
+        log_path = log_path if log_path.is_absolute() else ROOT / log_path
         for p in (out_path, log_path):
             if p.exists():
                 p.unlink()
@@ -113,7 +134,7 @@ def main():
             hit = lookup.get(sha(req["prompt"]))
             if hit is None:
                 if PROBE_SNIPPET in req["prompt"]:
-                    return {"text": "39", "finish": "stop"}
+                    return {"text": "391", "finish": "stop"}
                 raise SystemExit(f"unmatched stdio request (no blind answer): {req['prompt'][:120]!r}")
             out = {"text": hit.get("text", ""), "finish": "stop"}
             if hit.get("tool_calls"):
@@ -123,13 +144,11 @@ def main():
                 ]
             return out
 
-        proc, cmd = spawn("run", out_path, log_path)
+        proc, cmd = spawn("run", out_path, log_path, args.model)
         requests, rc, stderr = serve(proc, answer_for)
         print(stderr)
         print("exit:", rc, "requests:", len(requests))
         sys.exit(rc)
-    else:
-        raise SystemExit("usage: stdio_driver.py capture|run")
 
 
 if __name__ == "__main__":
