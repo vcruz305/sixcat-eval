@@ -16,6 +16,13 @@
 | tools | 100.0 | 20 | 0 |
 | **overall[vendor]** | **91.7** | | 10 of 120 |
 
+The official `--transport stdio` run (Stage 4) reproduced this receipt exactly:
+`knowledge 60.0 / math 100.0 / truth 95.0 / instruct 95.0 / code 100.0 / tools 100.0`,
+`overall[vendor] 91.7` — an independent cross-check that the Stage 3 replay and the
+supported stdio path agree item for item. Its policy fingerprint differs (`a2fc3a9cec64`
+vs `0aabb3c6e98a`) only because `--policy-family glm-5.x` was passed explicitly for the
+`glm-5.3-flash` model id (adopted-for mapping) rather than resolved by pattern match.
+
 Speed/tokens (`pp`/`tg`/`tps`, `rtok`/`atok`) are `n/a`: no model server was involved in scoring, so there is no wall-clock or usage telemetry to report. This receipt measures **quality only**.
 
 ---
@@ -100,6 +107,38 @@ sixcat's shipped code, unmodified.
 - Output: `offline/run.json` (full battery result, same schema as a live run) and the
   printed receipt table.
 
+### Stage 4 — official run over the `--transport stdio` interface (`offline/stdio_driver.py`)
+
+After this report was first written, upstream sixcat added
+[`--transport stdio`](docs/harness-stdio.md) (commit `3cce56b`): sixcat emits one JSONL
+`complete` request per line on stdout and reads one JSON answer per line on stdin, with all
+grading, journaling, and identity handling staying inside sixcat's `__main__`. That is the
+supported interface for exactly this situation ("the model is only reachable inside a
+harness"), so the run was redone through it:
+
+1. **Capture pass** (`stdio_driver.py capture`): sixcat is spawned as a subprocess with
+   `--transport stdio --model glm-5.3-flash --policy vendor --policy-family glm-5.x
+   --limit 20`; a throwaway auto-responder answers every request with a dummy `A` and the
+   full request stream is recorded (121 requests = 1 unscored policy probe + 120 scored
+   items). The probe answer is not graded; the throwaway result is discarded.
+2. **Blindness verification:** the 120 scored stdio prompts are SHA-1 hash-compared
+   against the prompts that were answered blind in Stage 2. Result: **byte-identical, same
+   order** — so the existing answer sheet applies without the model seeing anything new.
+3. **Official pass** (`stdio_driver.py run`): a fresh subprocess with new `--out`/`--log`
+   paths is fed the blind answers matched by prompt hash (the only prompt without a
+   recorded answer is the policy probe, answered from a fixed fallback since it is never
+   scored). sixcat runs the full battery itself: challenge selection, journals, guarded
+   HumanEval execution, IFEval checkers, tool-call grading, aggregation.
+
+One engineering note for other harness authors: sixcat prints per-item progress to stderr,
+so a stdio driver **must drain stderr concurrently** while reading request lines from
+stdout, or the OS pipe buffer fills and the run deadlocks (the first capture attempt hung
+on exactly this; the driver now drains stderr in a thread).
+
+- Output: `offline/stdio_run.json` (official result), `offline/stdio_journal.jsonl`
+  (official journal, identity includes `transport=stdio`, `base_url=stdio://harness`),
+  and the receipt below.
+
 ## 3. Item-level results
 
 Ten items failed. Honest breakdown:
@@ -162,6 +201,8 @@ python -m pip install langdetect pytest     # the only external deps used
 python offline/record_prompts.py            # Stage 1: record sanitized prompts (limit 20)
 # ... produce answers.json (Stage 2) ...
 python offline/replay_score.py              # Stage 3: score through the real battery
+python offline/stdio_driver.py capture      # Stage 4a: capture the official stdio stream
+python offline/stdio_driver.py run          # Stage 4b: official run via --transport stdio
 python -m pytest -q                         # harness self-check
 ```
 
@@ -174,7 +215,11 @@ Artifacts:
 | `offline/answers_build.py` | Stage 2 answer sheet builder + constraint validator input |
 | `offline/answers.json` | the model's 120 answers |
 | `offline/replay_score.py` | Stage 3 replay client + battery runner |
-| `offline/run.json` | full battery result in the standard sixcat result schema |
+| `offline/run.json` | Stage 3 result in the standard sixcat result schema |
+| `offline/stdio_driver.py` | Stage 4 official stdio driver (capture / run modes) |
+| `offline/stdio_prompts.json` | the 120 requests captured from the official stdio stream |
+| `offline/stdio_run.json` | Stage 4 official result (`--transport stdio`) |
+| `offline/stdio_journal.jsonl` | Stage 4 official journal (transport=stdio identity) |
 
 ## 7. What a proper run would look like
 
