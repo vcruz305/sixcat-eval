@@ -1,22 +1,104 @@
 # Sixcat 0.5.0 Release Notes
 
-**Release date:** 2026-08-27
+**Release date:** 2026-08-28
 
 **Previous release:** 0.4.6
 
 **Status:** final release
 
-Thinking-on no longer uses the Qwen/Ornith p95 token table as a score cap.
-Vendor/custom thinking policies use task-shaped safety ceilings (knowledge 8192,
-math 16384, truth 8192, instruct/code 32768, tools 16384). The old
-`THINKING_BUDGETS` table remains as the 0.4.x calibration receipt.
+Sixcat 0.5.0 stops using another family's p95 think length as the score cap,
+reports think vs answer tokens when the engine provides them, and fails empty
+truncated think instead of mining letters out of `<think>`. GLM-5.x vendor
+runs pre-close think so Q2-class GGUFs can emit an answer channel at all.
 
-Score table adds reasoning vs answer token columns (`rtok` / `atok`) when the
-engine reports `usage.reasoning_tokens`. Missing splits print `n/a` — never a
-character estimate. `trunc_in_think` flags empty answer channel at
-`finish=length`. Default `--request-timeout` is 1800s.
+Think-on 0.5 scores are **not comparable** to 0.4.6 think-on cards.
 
-Think-on 0.5 scores are not comparable to 0.4.6 think-on cards.
+## Task-shaped safety ceilings (not Qwen/Ornith p95)
+
+0.4.x thinking-on used a global table frozen from Ornith/Qwen traces
+(knowledge **1597**, math 2048, tools 768, …). That is a diet, not a protocol.
+A GLM-5.3 Flash Q2 run on that table filled 1597 tokens of `<think>`, never
+wrote `</think>`, and scored empty `pred` with `finish=length`.
+
+0.5 thinking-on uses **task** ceilings:
+
+| Category | Strict / no-think | Thinking-on ceiling |
+|---|---:|---:|
+| knowledge | 768 | 8192 |
+| math | 1197 | 16384 |
+| truth | 64 | 8192 |
+| instruct | 1281 | 32768 |
+| code | 1024 | 32768 |
+| tools | 256 | 16384 |
+
+`THINKING_BUDGETS` stays in code as the 0.4.x fingerprint / calibration
+receipt. It is not the thinking-on score cap. `--budget CATEGORY=N` still
+overrides one category. Family-specific budget stanzas are not required.
+
+These ceilings are safety rails. A `trunc_in_think` row still voids
+comparability for that item.
+
+## Reasoning vs answer tokens
+
+Every journal row now stores `rtok` / `atok` from the API split
+(`usage.reasoning_tokens` or `completion_tokens_details.reasoning_tokens`).
+`atok = max(ctok - rtok, 0)` only when both are integers. If the engine omits
+the split (llama.cpp often does), the cells are **`n/a`** — never
+`len(reasoning_content)/4`.
+
+The printed table adds a tokens block: per-category `rtok`, `atok`,
+`empty_answer`, `trunc_in_think`, plus a suite footer.
+
+## Truncated think is a fail
+
+If `finish=length` and the answer channel is empty, the row is
+`trunc_in_think`, `pred=""`, `ok=false`. Sixcat does not parse A/B/C or
+`####` out of `reasoning_content`. A warning is printed when any category
+has `trunc_in_think>0`.
+
+Default `--request-timeout` is **1800s** so a 32k think decode is not an
+HTTP timeout that looks like an empty answer.
+
+## GLM-5.x: leave think / emit an answer
+
+Stock `zai-org/GLM-5.3-Flash` jinja always opens `<think>` and never
+mentions `</think>` to llama.cpp's parser, so `--reasoning-budget` does not
+arm. `<|user|>` as a stop also fires **inside** think.
+
+0.5 vendor `glm-5.x` therefore:
+
+- keeps `reasoning_effort=high` (jinja only honors `low`/`high`; `max` is
+  the template fallback and is worse on this family)
+- sets `preclose_think` so `chat_template_kwargs.enable_thinking=false`
+- sends stop sequences
+  `<|system|>`, `<|user|>`, `<|end|>`, `<|eot|>`, `<|eot_id|>`, `<|endoftext|>`
+
+That only works if the **served** chat template pre-closes when
+`enable_thinking` is false. Ship file:
+
+`templates/GLM-5.3-Flash-chat-template-endthink.jinja`
+
+llama-server: `--jinja --chat-template-file <that file>`
+
+This is **answer-mode**, not “Q2 learned to close think.” Thinking traces are
+empty on purpose. Do not compare it to a think-on card from another family.
+
+Live check on Spark 78f1 (Q2_K + DFlash2 Q4, `-c 98304`): greedy France MC
+was `pred=A` / `finish=stop` / 8 tokens, 3/3. A 0.5.0 journal on that serve
+showed **0 empty preds** after 20 knowledge + early math, versus 0.4.6
+think-on where every row was `finish=length` at 1597. That in-progress
+journal is **not** a published overall.
+
+## Compatibility
+
+- New thinking-on policy fingerprint. Do not resume a 0.4.6 think-on JSONL
+  under 0.5.
+- Compare 0.4.6 vs 0.5 think-on is apples/oranges.
+- `rtok`/`atok` absent on old journals load as missing (`n/a`).
+
+## Verification receipts
+
+- `python -m pytest -q`: **271 passed**.
 
 # Sixcat 0.4.6 Release Notes
 

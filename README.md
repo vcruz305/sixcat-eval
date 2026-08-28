@@ -4,10 +4,11 @@
 
 Six community LLM categories. One overall number. Minutes, not hours.
 
-**0.4.5 release:** see [RELEASE_NOTES.md](RELEASE_NOTES.md) for observe-only
-served-context detection and probe-cost ETA ranges. 0.4.4 kept Telegram
-option-only follow-ups and adopting a reviewed vendor family when the model
-ID has no catalog row.
+**0.5.0 release:** thinking-on uses task-shaped safety ceilings instead of
+the Qwen/Ornith p95 table (knowledge 8192, not 1597). The score sheet reports
+`rtok`/`atok` when the engine splits them, and empty truncated think is a
+fail. GLM-5.x vendor pre-closes think so Q2 GGUFs emit an answer. See
+[RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Top features
 
@@ -36,7 +37,8 @@ ID has no catalog row.
   explicit override requests a descriptive-only delta.
 - **Quality and speed receipts together.** Every artifact records truncation, loop failures,
   parse confidence, wall-clock tok/s, and provider prefill/decode rates when the server
-  actually supplies them. Works with `llama-server`, vLLM, Ollama, and other
+  actually supplies them. Thinking-on also journals `rtok`/`atok` (API split only;
+  `n/a` if omitted) and flags `trunc_in_think`. Works with `llama-server`, vLLM, Ollama, and other
   OpenAI-compatible servers.
 
 Point it at any OpenAI-compatible server (`llama-server`, vLLM, Ollama). It prints:
