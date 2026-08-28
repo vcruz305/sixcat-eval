@@ -42,7 +42,7 @@ class TestBothPolicyCli(unittest.TestCase):
 
         clients = []
 
-        def make_client(base_url, model, policy, api_key="none", timeout=180.0):
+        def make_client(base_url, model, policy, api_key="none", timeout=180.0, **kwargs):
             client = SimpleNamespace(
                 base_url=base_url,
                 model=model,
@@ -129,7 +129,7 @@ class TestBothPolicyCli(unittest.TestCase):
     def test_both_without_paths_derives_separate_default_results_and_journals(self):
         from sixcat.__main__ import main
 
-        def make_client(base_url, model, policy, api_key="none", timeout=180.0):
+        def make_client(base_url, model, policy, api_key="none", timeout=180.0, **kwargs):
             return SimpleNamespace(
                 base_url=base_url,
                 model=model,
@@ -167,7 +167,7 @@ class TestBothPolicyCli(unittest.TestCase):
     def test_both_scope_mismatch_returns_nonzero_and_preserves_artifacts(self):
         from sixcat.__main__ import main
 
-        def make_client(base_url, model, policy, api_key="none", timeout=180.0):
+        def make_client(base_url, model, policy, api_key="none", timeout=180.0, **kwargs):
             return SimpleNamespace(
                 base_url=base_url,
                 model=model,
@@ -227,7 +227,7 @@ class TestBothPolicyCli(unittest.TestCase):
 
         clients = []
 
-        def make_client(base_url, model, policy, api_key="none", timeout=180.0):
+        def make_client(base_url, model, policy, api_key="none", timeout=180.0, **kwargs):
             client = SimpleNamespace(
                 base_url=base_url,
                 model=model,

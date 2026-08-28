@@ -100,6 +100,11 @@ class RunJournal:
                 and cls._is_loopback_base_url(incoming.get(key))
             ):
                 continue
+            if key == "transport":
+                loaded_t = loaded.get(key) or "openai"
+                incoming_t = incoming.get(key) or "openai"
+                if loaded_t == incoming_t:
+                    continue
             if loaded.get(key) != incoming.get(key):
                 changed.append(key)
         return changed
