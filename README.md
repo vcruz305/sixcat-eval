@@ -367,10 +367,16 @@ a served endpoint with enforced budgets and real sampling; the other is a
 self-administered offline replay with a disclosed-contaminated `tools` score. The
 provenance columns matter more than the overall numbers.
 
-| model | precision | hardware / serving | transport | harness | policy | n | overall |
-|---|---|---|---|---|---:|---:|---:|
-| GLM-5.3-Flash | vendor-hosted, unquantised | none — no model server | `stdio` | v0.5.0 | vendor (`glm-5.x`) | 20 | 91.7 ⚠️ |
-| Qwen3.8-27B EXL3 | 4.00 bpw + Q4 KV cache | Quadro RTX 6000, 24 GB, Turing sm_75 · TabbyAPI | `openai` | v0.5.1 | vendor (`qwen3.8`) | 10 | **75.0** |
+| model | weights (HF) | precision | hardware / serving | transport | sixcat | policy | n | overall |
+|---|---|---|---|---|---|---:|---:|---:|
+| GLM-5.3-Flash | [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash) | vendor-hosted, unquantised | none — no model server | `stdio` | **v0.5.0** | vendor (`glm-5.x`) | 20 | 91.7 ⚠️ |
+| Qwen3.8-27B EXL3 4.00bpw | [`turboderp/Qwen3.8-27B-exl3`](https://huggingface.co/turboderp/Qwen3.8-27B-exl3) @ `4.00bpw` | 4.00 bpw + Q4 KV cache | Quadro RTX 6000, 24 GB, Turing sm_75 · TabbyAPI | `openai` | **v0.5.1** | vendor (`qwen3.8`) | 10 | **75.0** |
+
+Base model for the Qwen row: [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B)
+(the `qwen3.8` vendor policy cites that model card, reviewed 2026-08-20).
+Receipts were produced on different sixcat versions — v0.5.0 for GLM, v0.5.1 for
+Qwen — which is a further reason not to read the two overall scores against each
+other.
 
 | model | knowledge | math | truth | instruct | code | tools |
 |---|---:|---:|---:|---:|---:|---:|
