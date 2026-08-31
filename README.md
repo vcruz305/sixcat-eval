@@ -357,6 +357,93 @@ The complete operator contract is in
 
 The comparison command refuses to compare a `--limit` smoke against a full run by default.
 
+## Results
+
+Complete battery runs. Partial and truncation-contaminated runs are omitted rather
+than shown with asterisks.
+
+**These two receipts are not directly comparable.** One is a live blind run against
+a served endpoint with enforced budgets and real sampling; the other is a
+self-administered offline replay with a disclosed-contaminated `tools` score. The
+provenance columns matter more than the overall numbers.
+
+| model | weights (HF) | precision | hardware / serving | transport | sixcat | policy | n | overall |
+|---|---|---|---|---|---|---:|---:|---:|
+| GLM-5.3-Flash | [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash) | vendor-hosted, unquantised | none — no model server | `stdio` | **v0.5.0** | vendor (`glm-5.x`) | 20 | 91.7 ⚠️ |
+| Qwen3.8-27B EXL3 4.00bpw | [`turboderp/Qwen3.8-27B-exl3`](https://huggingface.co/turboderp/Qwen3.8-27B-exl3) @ `4.00bpw` | 4.00 bpw + Q4 KV cache | Quadro RTX 6000, 24 GB, Turing sm_75 · TabbyAPI | `openai` | **v0.5.1** | vendor (`qwen3.8`) | 10 | **75.0** |
+
+Base model for the Qwen row: [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B)
+(the `qwen3.8` vendor policy cites that model card, reviewed 2026-08-20).
+Receipts were produced on different sixcat versions — v0.5.0 for GLM, v0.5.1 for
+Qwen — which is a further reason not to read the two overall scores against each
+other.
+
+| model | knowledge | math | truth | instruct | code | tools |
+|---|---:|---:|---:|---:|---:|---:|
+| GLM-5.3-Flash | 60.0 | 100.0 | 95.0 | 95.0 | 100.0 ⚠️ | 100.0 ⚠️ |
+| Qwen3.8-27B EXL3 4.00bpw | 40.0 | **100.0** | 60.0 | **90.0** | 80.0 | **80.0** |
+
+Bold = zero loop failures, zero truncation, zero empty answers.
+
+### GLM-5.3-Flash — 91.7 ⚠️ read the caveats
+
+Full receipt: [`SELF_EVAL_REPORT.md`](SELF_EVAL_REPORT.md). The session model could
+not be reached over HTTP (client-gated provider gateway; the stored key had no
+balance for this model), so it was scored by offline replay and reproduced over
+`--transport stdio`. Its own Section 4 discloses:
+
+- **Self-administered.** The model producing the answers and the agent running the
+  harness are the same system. No independent sampler and no temperature-1.0 draw —
+  each answer is a single deliberate response.
+- **`tools` 100.0 is contaminated.** The model saw `sixcat/tools.py`, whose `ITEMS`
+  constants contain the expected calls inline. Treat as an upper bound, not evidence.
+- **`code` 100.0 carries a known-harness format fix.** HumanEval/32 was completed
+  with the harness's "repeated entry function" heuristic in mind; the report states a
+  live model would likely fail that item.
+- **No token budgets enforced**, so truncation dynamics at the budget edge were never
+  exercised — the failure mode that dominates real local-model runs.
+- No speed or usage telemetry: this receipt measures quality only.
+
+### Qwen3.8-27B EXL3 4.00bpw — 75.0
+
+Live blind run over an OpenAI-compatible endpoint. Quadro RTX 6000 (Turing sm_75,
+24 GB) running TabbyAPI on a Turing-patched ExLlamaV3, Q4 KV cache, 262,144-token
+context, `--concurrency 4`, budgets enforced. 28.7 tok/s decode, ~457 tok/s prefill
+at 32K. 60/60 items scored, no timeout.
+
+`math`, `instruct` and `tools` recorded zero loops, zero truncation and zero empty
+answers. `knowledge`, `truth` and `code` carried `trunc-in-think` and loop failures,
+so those three are weaker evidence than their scores suggest.
+
+### Sampling policy matters more than expected on local models
+
+Same model, same hardware, same harness — only `--policy` changed:
+
+| policy | sampling | knowledge | math | truth | instruct | code | tools | overall |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `strict` | temp 0.0 | 50.0 | 100.0 | 50.0 | 80.0 | 0.0 *(n=2)* | *not reached* | 56.0 |
+| `vendor` | temp 1.0, top_p 0.95, top_k 20 | 40.0 | 100.0 | 60.0 | 90.0 | 80.0 | 80.0 | **75.0** |
+
+Greedy decoding pushed this long-thinking model into repetition loops. The loops
+consumed the time budget, the run hit `--max-minutes`, and because categories are
+processed in order the tail went unscored — `tools` came back `n=0` in five of six
+timed-out runs while `knowledge` and `math` were always complete. Read as model
+quality that looks like a badly degraded quantisation. It was the sampling config.
+
+Two practical notes for local-model evaluation:
+
+- A model served under a non-descriptive id (`4.00bpw`, `local-model`) matches no
+  pattern in `model-policies.json`, so `--policy vendor` will not resolve on its own.
+  Pass `--policy-family` explicitly, or serve it under a matching name.
+- `--concurrency` is what lets a slow local model finish inside the time budget.
+  Against a batching server it roughly doubled aggregate throughput here, turning a
+  run that had timed out six times into a complete one.
+
+Check the diagnostic columns before reading any score as quality: `ctok_max` at the
+category budget means truncation, `empty > 0` means a parser or format mismatch, and
+a whole category coming back unparseable usually means server configuration rather
+than the model.
+
 ## Method
 
 - One stream. One model id. Same prompt template every run.
