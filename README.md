@@ -2,6 +2,11 @@
 
 # sixcat-eval
 
+> ### Built on the work of others
+>
+> Packs evaluated here use the EXL3 trellis format and MCG codebook from [ExLlamaV3](https://github.com/turboderp/exllamav3) by Turboderp ([@turboderp](https://github.com/turboderp)). Thank you for the
+> quantization method this work measures.
+
 Six community LLM categories. One overall number. Minutes, not hours.
 
 **0.5.1 release:** `--transport stdio` lets a coding harness (ZCode, Claude
