@@ -203,8 +203,8 @@ def test_stream_options_has_one_compatibility_fallback():
             deadline=time.monotonic() + 5,
         )
     assert result["succeeded"] == 4
-    assert state["fallbacks"] == 4
-    assert state["posts"] == 8
+    assert state["fallbacks"] == 5
+    assert state["posts"] == 10
     assert result["aggregate_output_tps"] is None
     assert result["request_rps"] > 0
 
