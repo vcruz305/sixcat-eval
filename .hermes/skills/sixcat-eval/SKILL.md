@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.6.0
+version: 0.7.0
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -19,7 +19,7 @@ an alternate OpenAI-compatible endpoint. Ask for the target first, preview the
 exact reviewed sampling policy, keep the run observable, and report only from
 saved receipts.
 
-## 0.6.0 execution contract
+## 0.7.0 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
 full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
@@ -31,6 +31,19 @@ The deadline covers active requests and preflight. Save and label incomplete
 results; do not promise the full 120 can finish on any given hardware. `both`
 shares one total deadline. Live throughput comes from `execution.throughput_tps`,
 not the historical request-weighted `suite_tps`. Preserve each execution segment.
+
+For a **direct OpenAI-compatible HTTP endpoint**, offer `--auto-concurrency`
+when the user wants Sixcat to find the throughput knee before the scored run.
+The calibration is unscored, uses synthetic prompts rather than benchmark
+questions, and shares the 30-minute invocation budget. For a speed-only request,
+use `python -m sixcat speed`; report client TTFT/E2E/TPOT percentiles separately
+from provider-native prefill/decode/queue metrics. Recommend `--samples 100`
+when p99 itself is an acceptance criterion.
+
+Do **not** use `--auto-concurrency` or `sixcat speed` through the current Hermes
+runtime loopback bridge: that bridge returns complete JSON responses rather than
+SSE token streams, so it cannot produce valid client TTFT. Use a direct
+OpenAI-compatible endpoint for streaming performance measurement.
 
 Use distinct artifact IDs/output paths for different quantizations. An operator
 artifact ID and server metadata are recorded evidence, not proof of the weights.
@@ -46,6 +59,8 @@ external benchmark. Both are opt-in.
 - The user asks for live status from an existing Sixcat JSONL journal.
 - The user asks to retry failed or remaining items from an existing Sixcat receipt
   against the current Hermes session model.
+- The user asks to find the best serving concurrency, TTFT, p95/p99 latency,
+  prefill/decode speed, or a speed-only benchmark against a direct HTTP endpoint.
 
 Do not use this skill to launch, kill, swap, download, or quantize a model.
 Hermes-runtime mode may create a short-lived loopback proxy owned by the tracked
