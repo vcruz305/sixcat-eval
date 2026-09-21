@@ -166,6 +166,8 @@ def test_stream_sample_separates_client_and_provider_metrics():
     assert sample["effective_decode_tps"] == pytest.approx(10)
     assert sample["server_prefill_tps"] == 500
     assert sample["server_decode_tps"] == 50
+    assert sample["provider_effective_prefill_tps"] == pytest.approx(1250)
+    assert sample["provider_effective_decode_tps"] is None
 
 
 def test_confirmation_streams_concurrently_and_reports_tail_metrics():
@@ -188,6 +190,8 @@ def test_confirmation_streams_concurrently_and_reports_tail_metrics():
     assert result["server_prefill_tps"]["p50"] == 1200
     assert result["server_decode_tps"]["p50"] == 80
     assert result["provider_ttft"]["p50"] == pytest.approx(.009)
+    assert result["provider_effective_prefill_tps"]["p50"] > 0
+    assert result["provider_effective_decode_tps"]["p50"] > 0
     assert result["p99_sample_warning"] is True
 
 
