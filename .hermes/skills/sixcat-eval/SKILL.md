@@ -524,7 +524,7 @@ The skill is working when:
 
 Keep these plain-English explanations available in the skill UI and do not replace them with a fill-in template.
 
-- 🧠 Current Hermes session model (recommended) — use the exact live model, not the agent facade.
+- 🧠 Current Hermes session model (recommended) — use the exact live raw model, not the agent facade.
 - 👤 Another Hermes profile — resolve that profile first.
 - 🔌 Alternate OpenAI-compatible endpoint — detect the endpoint only after the target choice.
 - 🎛️ Custom sampling — temperature controls randomness; top-p, top-k, and min-p filter the candidate distribution.
