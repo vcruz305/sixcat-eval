@@ -842,10 +842,12 @@ def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
     decode = profiles.get("decode")
     if decode:
         # Single-stream C=1 is the honest headline for maximum per-stream decode.
-        source = _profile_level(decode, 1) or decode["confirmation"]
+        c1 = _profile_level(decode, 1)
+        source = c1 or decode["confirmation"]
+        source_label = "single-stream C=1" if c1 is not None else f"C={decode['selected_concurrency']}"
         dist = source.get("effective_decode_tps") or {}
         lines.append(
-            "DECODE (single-stream C=1): "
+            f"DECODE ({source_label}): "
             f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
             f"max={_fmt(dist.get('max'))} best-sustained(p90)={_fmt(dist.get('p90'))} tok/s"
         )
@@ -868,10 +870,12 @@ def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
     if prefill:
         # Use C=1 for the single-request prompt-ingestion headline; the selected
         # concurrency remains available separately in the profile receipt.
-        source = _profile_level(prefill, 1) or prefill["confirmation"]
+        c1 = _profile_level(prefill, 1)
+        source = c1 or prefill["confirmation"]
+        source_label = "single-stream C=1" if c1 is not None else f"C={prefill['selected_concurrency']}"
         dist = source.get("effective_prefill_tps") or {}
         lines.append(
-            "PREFILL (single-stream C=1): "
+            f"PREFILL ({source_label}): "
             f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
             f"max={_fmt(dist.get('max'))} effective tok/s"
         )
@@ -929,7 +933,7 @@ def main(argv: list[str]) -> int:
         help="Skip per-profile curve discovery and confirm this fixed concurrency.",
     )
     parser.add_argument("--candidates", default="1,2,4,8")
-    parser.add_argument("--curve-seconds", type=float, default=60.0)
+    parser.add_argument("--curve-seconds", type=float, default=120.0)
     parser.add_argument("--curve-requests-per-worker", type=int, default=2)
     parser.add_argument("--curve-min-requests", type=int, default=4)
     parser.add_argument("--knee-fraction", type=float, default=0.90)
@@ -953,7 +957,7 @@ def main(argv: list[str]) -> int:
         default=600.0,
         help="Shared total speed-suite budget. Default 600 seconds for the three-profile suite.",
     )
-    parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
