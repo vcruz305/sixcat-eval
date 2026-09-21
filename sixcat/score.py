@@ -268,4 +268,21 @@ def extract_gsm_number_conf(text: str) -> tuple[str | None, str]:
 def extract_gsm_number(text: str) -> str | None:
     number, _ = extract_gsm_number_conf(text)
     return number
-\n\n# Parser v5 lives in a focused module; aliases preserve the public score.py API.\nfrom .parsing import normalize_num as _normalize_num, parse_gsm_answer, parse_mc_answer, strip_reasoning as _strip_reasoning\n\ndef extract_mc_letter_conf(text: str, valid_letters: str | None = None) -> tuple[str | None, str]:\n    parsed = parse_mc_answer(text, valid_letters=valid_letters)\n    return parsed["value"], parsed["confidence"]\n\ndef extract_mc_letter(text: str) -> str | None:\n    return extract_mc_letter_conf(text)[0]\n\ndef extract_gsm_number_conf(text: str) -> tuple[str | None, str]:\n    parsed = parse_gsm_answer(text)\n    return parsed["value"], parsed["confidence"]\n\ndef extract_gsm_number(text: str) -> str | None:\n    return extract_gsm_number_conf(text)[0]\n
+
+
+# Parser v5 lives in a focused module; aliases preserve the public score.py API.
+from .parsing import normalize_num as _normalize_num, parse_gsm_answer, parse_mc_answer, strip_reasoning as _strip_reasoning
+
+def extract_mc_letter_conf(text: str, valid_letters: str | None = None) -> tuple[str | None, str]:
+    parsed = parse_mc_answer(text, valid_letters=valid_letters)
+    return parsed["value"], parsed["confidence"]
+
+def extract_mc_letter(text: str) -> str | None:
+    return extract_mc_letter_conf(text)[0]
+
+def extract_gsm_number_conf(text: str) -> tuple[str | None, str]:
+    parsed = parse_gsm_answer(text)
+    return parsed["value"], parsed["confidence"]
+
+def extract_gsm_number(text: str) -> str | None:
+    return extract_gsm_number_conf(text)[0]
