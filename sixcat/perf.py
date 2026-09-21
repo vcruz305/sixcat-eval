@@ -49,6 +49,10 @@ WORKLOAD_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+# Backward-compatible library defaults map to the Balanced workload.
+DEFAULT_PROMPT_WORDS = int(WORKLOAD_PROFILES["balanced"]["prompt_words"])
+DEFAULT_MAX_TOKENS = int(WORKLOAD_PROFILES["balanced"]["max_tokens"])
+
 
 def _percentile(values: list[float], pct: float) -> float | None:
     if not values:
