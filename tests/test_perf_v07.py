@@ -209,7 +209,7 @@ def test_stream_options_has_one_compatibility_fallback():
     assert result["succeeded"] == 4
     assert state["fallbacks"] == 5
     assert state["posts"] == 10
-    assert result["aggregate_output_tps"] is None
+    assert result["aggregate_output_tps"] > 0
     assert result["request_rps"] > 0
 
 
