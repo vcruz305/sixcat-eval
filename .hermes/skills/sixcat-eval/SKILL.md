@@ -518,3 +518,28 @@ The skill is working when:
   array so Telegram rendered buttons instead of a bare question;
 - an unmapped vendor request offered adopt-family, custom, or strict instead of
   launching a fake vendor run.
+
+
+## Operator vocabulary preserved for conversational clarity
+
+Keep these plain-English explanations available in the skill UI and do not replace them with a fill-in template.
+
+- 🧠 Current Hermes session model (recommended) — use the exact live model, not the agent facade.
+- 👤 Another Hermes profile — resolve that profile first.
+- 🔌 Alternate OpenAI-compatible endpoint — detect the endpoint only after the target choice.
+- 🎛️ Custom sampling — temperature controls randomness; top-p, top-k, and min-p filter the candidate distribution.
+- 🧊 Deterministic baseline — temperature 0.
+- 🏷️ Vendor-recommended temperature/settings — reviewed model-family settings when mapped.
+- 🔬 Standard inspection — 20 scored items per category, about 120 scored rows total.
+- ⚖️ Compare both — strict and vendor profiles remain separate receipts.
+- ⚡ Quick — reduced per-category scope.
+- 🧭 Full — all shipped rows, still time-bounded unless explicitly uncapped.
+- 🛠️ HumanEval host-guarded execution — useful for trusted local models.
+- 🧪 Standard benchmark — the short daily-driver run.
+- 🛡️ `--skip-code-exec` — disable generated-code execution for untrusted endpoints.
+- 🚫 Generated code execution is not a security sandbox.
+- 🌡️ Thinking controls whether the model's reasoning mode is requested.
+- 5️⃣ Five items per category and 🔟 ten items per category are small custom scopes.
+- ♾️ Full mode with `--max-minutes 0` is intentionally uncapped.
+
+Seed helps repeat stochastic settings when the endpoint honors it; some endpoints ignore it. Use selectable options for setup questions. Do not use a fill-in template for sampling values.
