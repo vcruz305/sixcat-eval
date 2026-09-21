@@ -87,7 +87,7 @@ Reported metrics include:
 - **server prefill/decode tok/s** when the provider exposes native timing fields;
 - **provider TTFT/queue/ITL** when the endpoint exposes per-request metrics.
 
-llama.cpp currently exposes prompt/decode timing fields and streamed usage through its OpenAI-compatible server, while current vLLM exposes serving metrics such as TTFT, inter-token latency, prefill time, and decode time through its metrics/per-request instrumentation. SixCat keeps client-observed and provider-native measurements separate instead of pretending they are interchangeable.
+llama.cpp currently exposes prompt/decode timing fields and streamed usage through its OpenAI-compatible server. Current vLLM can attach per-request TTFT, generation time, queue time, mean ITL, and token throughput to the final usage chunk when the server is launched with `--enable-per-request-metrics`; SixCat consumes those fields when present. SixCat keeps client-observed and provider-native measurements separate instead of pretending they are interchangeable.
 
 With fewer than 100 confirmation requests, the report marks p99 as a low-sample empirical/interpolated tail estimate. Use `--samples 100` or more when p99 itself is an important acceptance criterion.
 
