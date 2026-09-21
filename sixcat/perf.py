@@ -25,13 +25,29 @@ from .journal import TimeBudget
 from .policy import custom_policy, override_thinking, resolve_policy
 from .storage import atomic_write_json
 
-SPEED_SCHEMA = "sixcat-speed-v1"
+SPEED_SCHEMA = "sixcat-speed-v2"
 CURVE_METHOD = "smallest-concurrency-within-90pct-peak-v1"
 DEFAULT_CANDIDATES = (1, 2, 4, 8)
-DEFAULT_PROMPT_WORDS = 256
-DEFAULT_MAX_TOKENS = 96
 DEFAULT_CURVE_SECONDS = 60.0
 DEFAULT_CONFIRM_SAMPLES = 32
+DEFAULT_SPEED_PROFILES = ("decode", "balanced", "prefill")
+WORKLOAD_PROFILES: dict[str, dict[str, Any]] = {
+    "decode": {
+        "prompt_words": 32,
+        "max_tokens": 512,
+        "purpose": "short prompt + long generation to expose sustained decode speed",
+    },
+    "balanced": {
+        "prompt_words": 256,
+        "max_tokens": 128,
+        "purpose": "mixed prompt/generation workload for realistic serving throughput",
+    },
+    "prefill": {
+        "prompt_words": 2048,
+        "max_tokens": 32,
+        "purpose": "long prompt + short generation to expose prompt-ingestion speed",
+    },
+}
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -50,17 +66,45 @@ def _percentile(values: list[float], pct: float) -> float | None:
 def _distribution(values: list[float]) -> dict[str, Any]:
     clean = [float(value) for value in values if math.isfinite(float(value))]
     if not clean:
-        return {"n": 0, "min": None, "p5": None, "p50": None, "p95": None, "p99": None, "max": None, "mean": None}
+        return {"n": 0, "min": None, "p5": None, "p50": None, "p90": None, "p95": None, "p99": None, "max": None, "mean": None}
     return {
         "n": len(clean),
         "min": min(clean),
         "p5": _percentile(clean, 0.05),
         "p50": _percentile(clean, 0.50),
+        "p90": _percentile(clean, 0.90),
         "p95": _percentile(clean, 0.95),
         "p99": _percentile(clean, 0.99),
         "max": max(clean),
         "mean": statistics.fmean(clean),
     }
+
+
+def resolve_workloads(
+    profile: str,
+    *,
+    prompt_words: int | None = None,
+    max_tokens: int | None = None,
+) -> list[dict[str, Any]]:
+    if profile == "all":
+        return [{"name": name, **WORKLOAD_PROFILES[name]} for name in DEFAULT_SPEED_PROFILES]
+    if profile == "custom":
+        if prompt_words is None or max_tokens is None:
+            raise ValueError("--profile custom requires --prompt-words and --max-tokens")
+        return [{
+            "name": "custom",
+            "prompt_words": prompt_words,
+            "max_tokens": max_tokens,
+            "purpose": "operator-defined custom serving workload",
+        }]
+    if profile not in WORKLOAD_PROFILES:
+        raise ValueError(f"unknown speed profile {profile!r}")
+    workload = {"name": profile, **WORKLOAD_PROFILES[profile]}
+    if prompt_words is not None:
+        workload["prompt_words"] = prompt_words
+    if max_tokens is not None:
+        workload["max_tokens"] = max_tokens
+    return [workload]
 
 
 def parse_candidates(value: str | list[int] | tuple[int, ...]) -> list[int]:
