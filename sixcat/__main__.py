@@ -113,6 +113,9 @@ def _write_result(result: dict, out_path: Path, log_path: Path) -> None:
 
 
 def _run_main(argv: list[str]) -> int:
+    explicit_concurrency = any(
+        token == "--concurrency" or token.startswith("--concurrency=") for token in argv
+    )
     p = argparse.ArgumentParser(prog="sixcat", description="Six community categories + one overall score.")
     p.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
     p.add_argument("--model", required=True)
@@ -183,8 +186,18 @@ def _run_main(argv: list[str]) -> int:
         "--concurrency",
         type=int,
         default=1,
-        help="In-flight scored items (llama-server -np should be >= this). Default 1. Not part of journal identity.",
+        help="In-flight scored items. Default 1; use --auto-concurrency to discover the serving throughput knee first.",
     )
+    p.add_argument(
+        "--auto-concurrency",
+        action="store_true",
+        help="Run an unscored synthetic concurrency curve first, then use its recommended concurrency for the scored run.",
+    )
+    p.add_argument("--concurrency-candidates", default="1,2,4,8")
+    p.add_argument("--calibration-seconds", type=float, default=60.0)
+    p.add_argument("--calibration-knee-fraction", type=float, default=0.90)
+    p.add_argument("--calibration-prompt-words", type=int, default=256)
+    p.add_argument("--calibration-max-tokens", type=int, default=64)
     p.add_argument(
         "--transport",
         choices=("openai", "stdio"),
@@ -237,8 +250,18 @@ def _run_main(argv: list[str]) -> int:
         p.error("--ctx must be a positive token count")
     if args.concurrency < 1:
         p.error("--concurrency must be >= 1")
+    if args.auto_concurrency and explicit_concurrency:
+        p.error("--auto-concurrency and an explicit --concurrency are mutually exclusive")
+    if args.auto_concurrency and args.transport != "openai":
+        p.error("--auto-concurrency requires --transport openai")
     if args.transport == "stdio" and args.concurrency != 1:
         p.error("--transport stdio requires --concurrency 1")
+    if not math.isfinite(args.calibration_seconds) or args.calibration_seconds <= 0:
+        p.error("--calibration-seconds must be finite and positive")
+    if not 0.5 <= args.calibration_knee_fraction <= 1.0:
+        p.error("--calibration-knee-fraction must be between 0.5 and 1.0")
+    if args.calibration_prompt_words < 16 or args.calibration_max_tokens < 2:
+        p.error("--calibration-prompt-words must be >= 16 and --calibration-max-tokens >= 2")
     protocol_out = sys.stdout
     if args.transport == "stdio":
         args.base_url = "stdio://harness"
