@@ -51,7 +51,7 @@ def test_project_skill_has_safe_frontmatter_and_conversational_workflow():
         "live status",
         "policy fingerprint",
         "identity guard",
-        "parser identity: `v4`",
+        "parser identity: `v5`",
         "broadcast one credential",
         "host-guarded",
         "skip-code-exec",

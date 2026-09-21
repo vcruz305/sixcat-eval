@@ -97,10 +97,10 @@ class TestBothPolicyCli(unittest.TestCase):
             self.assertEqual([client.policy.budgets["math"] for client in clients], [2222, 2222])
             self.assertEqual(clients[1].policy.extra["seed"], 1)
             self.assertEqual(run_battery.call_count, 2)
-            self.assertEqual(budget_type.call_count, 2)
+            self.assertEqual(budget_type.call_count, 1)
             self.assertEqual(
                 [call.kwargs for call in budget_type.call_args_list],
-                [{"seconds": 900.0}, {"seconds": 900.0}],
+                [{"seconds": 900.0}],
             )
             self.assertEqual(session_type.call_count, 2)
             self.assertEqual(

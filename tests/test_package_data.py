@@ -31,7 +31,10 @@ def test_pyproject_declares_dataset_package_data():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
     assert 'sixcat = ["model-policies.json", "data/*.jsonl"]' in text
-    assert 'dependencies = ["langdetect>=1.0.9,<2"]' in text
+    import tomllib
+    dependencies = tomllib.loads(text)["project"]["dependencies"]
+    assert "langdetect>=1.0.9,<2" in dependencies
+    assert "httpx>=0.28.1,<1" in dependencies
 
 
 def test_sdist_manifest_includes_the_complete_test_package():

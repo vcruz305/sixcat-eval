@@ -586,7 +586,7 @@ class TestPolicyResolution(unittest.TestCase):
             captured.update(json.loads(request.data.decode("utf-8")))
             return FakeResponse()
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("sixcat.client.open_request", side_effect=fake_urlopen):
             ChatClient("http://localhost:9999/v1", "GLM-5.3-Flash-Q2_K", policy).complete("probe")
 
         self.assertEqual(captured["reasoning_effort"], "high")
@@ -853,7 +853,7 @@ class TestPolicyAwareClient(unittest.TestCase):
             captured.update(json.loads(request.data.decode("utf-8")))
             return FakeResponse()
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("sixcat.client.open_request", side_effect=fake_urlopen):
             out = ChatClient("http://localhost:9999/v1", "model", policy, api_key="key").complete(
                 "probe", max_tokens=99
             )
@@ -901,7 +901,7 @@ class TestPolicyAwareClient(unittest.TestCase):
             def read(self):
                 return json.dumps(response_body).encode("utf-8")
 
-        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        with patch("sixcat.client.open_request", return_value=FakeResponse()):
             out = ChatClient("http://localhost:9999/v1", "model", policy).complete("probe")
 
         self.assertEqual(out["reasoning_content"], "17*23=391")
@@ -1058,7 +1058,12 @@ class TestPolicyCliWiring(unittest.TestCase):
             identity,
             {
                 "result_schema": "sixcat-v2",
-                "parser": "v4",
+                "parser": "v5",
+                "attempt_policy": "first-scored-response-v1",
+                "schedule": "balanced-hardest-first-v1",
+                "benchmark_fingerprint": identity["benchmark_fingerprint"],
+                "server_identity": {"evidence": "unavailable"},
+                "artifact_id": None,
                 "model": "ornith-nomtp",
                 "base_url": "http://127.0.0.1:8085/v1",
                 "policy": policy.name,
@@ -1159,7 +1164,9 @@ class TestPolicyCliWiring(unittest.TestCase):
                 main(["--model", "test-model", "--log", "existing.jsonl"])
 
         self.assertEqual(caught.exception.code, 2)
-        client_type.assert_not_called()
+        # Server metadata may be read to verify the upstream before resuming;
+        # model completions must still never be sent on a mismatch.
+        client_type.return_value.complete.assert_not_called()
 
 
 class TestPolicyProbe(unittest.TestCase):
@@ -1295,7 +1302,7 @@ class TestPolicyRunIntegration(unittest.TestCase):
         self.assertEqual(result["policy_probe"], "ok")
         self.assertEqual(result["policy_fingerprint"], policy.fingerprint)
         self.assertEqual(result["budgets"]["knowledge"], 600)
-        self.assertEqual(result["parser"], "v4")
+        self.assertEqual(result["parser"], "v5")
         self.assertEqual(result["code_execution"], "host-guarded")
         self.assertNotIn("code-exec-disabled", result["overall_flags"])
         self.assertEqual(result["overall"], {"policy": "strict", "score": 100.0})

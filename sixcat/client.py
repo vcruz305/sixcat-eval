@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import json
+import copy
+import queue
+import threading
+from .http_transport import open_request
+from .runtime import effective_timeout
+from .score import _strip_reasoning
 import sys
 import time
 import urllib.error
@@ -141,7 +147,7 @@ def apply_stream_speed(
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> tuple[Any, str | None]:
     try:
         req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_request(req, timeout=effective_timeout(timeout)) as resp:
             return json.loads(resp.read().decode()), None
     except Exception as exc:
         return None, str(exc)
@@ -203,6 +209,8 @@ class ChatClient:
         self.transport = transport or "openai"
         self.stdio_in = stdio_in
         self.stdio_out = stdio_out
+        self._stdio_lock = threading.Lock()
+        self._stdio_poisoned = False
 
     def complete(
         self,
@@ -236,8 +244,14 @@ class ChatClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        # Keep wire settings as well as requested policy settings: template overrides
+        # such as preclose_think must be visible in receipts, not silently inferred.
+        wire_request = copy.deepcopy(payload)
         if self.transport == "stdio":
-            return self._complete_stdio(payload, request_params)
+            with self._stdio_lock:
+                result = self._complete_stdio(payload, request_params)
+            result["wire_request"] = wire_request
+            return result
         req = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload).encode(),
@@ -249,14 +263,21 @@ class ChatClient:
         )
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with open_request(req, timeout=effective_timeout(self.timeout)) as resp:
                 data = json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")
-            raise RuntimeError(f"HTTP {e.code}: {body[:400]}") from e
+            raise RuntimeError(f"HTTP {e.code}: completion request rejected") from e
         wall_s = time.perf_counter() - started
-        choice = (data.get("choices") or [{}])[0]
-        msg = choice.get("message") or {}
+        if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
+            raise ValueError("completion response requires a non-empty choices array")
+        choice = data["choices"][0]
+        if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+            raise ValueError("completion response requires a message object")
+        msg = choice["message"]
+        if msg.get("content") is not None and not isinstance(msg["content"], str):
+            raise ValueError("completion content must be text or null")
+        if msg.get("tool_calls") is not None and not isinstance(msg["tool_calls"], list):
+            raise ValueError("tool_calls must be an array")
         usage = data.get("usage") or {}
         timings = extract_server_timings(data)
         completion_tokens = usage.get("completion_tokens")
@@ -272,7 +293,11 @@ class ChatClient:
         # cloud gateways hide the text while still reporting token counts.
         reasoning, reasoning_meta = _reasoning_from_message(msg, data)
         return {
-            "text": msg.get("content") or "",
+            "text": _strip_reasoning(msg.get("content") or ""),
+            "source_text": msg.get("content") or "",
+            "wire_request": wire_request,
+            "provider_model": data.get("model"),
+            "system_fingerprint": data.get("system_fingerprint"),
             "tool_calls": msg.get("tool_calls") or [],
             "finish": choice.get("finish_reason"),
             "reasoning_content": reasoning,
@@ -307,22 +332,47 @@ class ChatClient:
             "max_tokens": payload.get("max_tokens"),
             "tools": payload.get("tools"),
             "request_params": dict(request_params),
+            "wire_request": copy.deepcopy(payload),
         }
         out = self.stdio_out if self.stdio_out is not None else sys.stdout
         inp = self.stdio_in if self.stdio_in is not None else sys.stdin
         started = time.perf_counter()
-        out.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        out.flush()
-        line = inp.readline()
+        if self._stdio_poisoned:
+            raise RuntimeError("stdio transport is desynchronized after a timeout; start a fresh harness")
+        response_timeout = effective_timeout(self.timeout)
+        reply = queue.Queue(maxsize=1)
+        def exchange():
+            try:
+                out.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                out.flush()
+                line = inp.readline(16 * 1024 * 1024 + 1)
+                reply.put((line, None))
+            except Exception as exc:
+                reply.put((None, exc))
+        threading.Thread(target=exchange, name="sixcat-stdio", daemon=True).start()
+        try:
+            line, error = reply.get(timeout=response_timeout)
+        except (queue.Empty, TimeoutError) as exc:
+            self._stdio_poisoned = True
+            raise TimeoutError("stdio response deadline reached; harness must be restarted") from exc
+        if error is not None:
+            self._stdio_poisoned = True
+            raise error
+        if len(line) > 16 * 1024 * 1024:
+            self._stdio_poisoned = True
+            raise ValueError("stdio response exceeds 16 MiB safety limit")
         if not line:
+            self._stdio_poisoned = True
             raise RuntimeError("stdio transport: harness closed stdin before answering")
         try:
             data = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"stdio transport: harness sent non-JSON: {line[:200]!r}") from exc
+            self._stdio_poisoned = True
+            raise RuntimeError("stdio transport: harness sent non-JSON") from exc
         if not isinstance(data, dict):
             raise RuntimeError("stdio transport: harness answer must be a JSON object")
         if data.get("id") not in (None, req_id):
+            self._stdio_poisoned = True
             raise RuntimeError(f"stdio transport: id mismatch {data.get('id')!r} != {req_id}")
         wall_s = time.perf_counter() - started
         text = data.get("text")
@@ -345,7 +395,11 @@ class ChatClient:
         }
         reasoning, reasoning_meta = _reasoning_from_message(fake_msg, data)
         return {
-            "text": text,
+            "text": _strip_reasoning(text),
+            "source_text": text,
+            "wire_request": copy.deepcopy(payload),
+            "provider_model": data.get("model"),
+            "system_fingerprint": data.get("system_fingerprint"),
             "tool_calls": fake_msg["tool_calls"],
             "finish": data.get("finish") or data.get("finish_reason"),
             "reasoning_content": reasoning,

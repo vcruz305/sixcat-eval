@@ -1,0 +1,5 @@
+# Deliberate CI pins; runtime dependencies remain in pyproject.toml.
+pytest==9.1.1
+pytest-timeout==2.4.0
+coverage==7.16.1
+PyYAML==6.0.3

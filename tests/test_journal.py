@@ -81,14 +81,14 @@ class TestJournal(unittest.TestCase):
                 with self.subTest(field=field), self.assertRaisesRegex(ValueError, "run identity mismatch"):
                     RunJournal(p, resume=True, identity={**self.IDENTITY, field: value})
 
-    def test_loopback_base_url_port_change_does_not_block_resume(self):
+    def test_loopback_base_url_port_change_blocks_unverified_resume(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "run.jsonl"
             with RunJournal(p, resume=False, identity=self.IDENTITY) as journal:
                 journal.append({"cat": "math", "key": "gsm:0", "ok": True})
             moved = {**self.IDENTITY, "base_url": "http://127.0.0.1:64675/v1"}
-            with RunJournal(p, resume=True, identity=moved) as resumed:
-                self.assertEqual(resumed.done_keys(), {("math", "gsm:0")})
+            with self.assertRaisesRegex(ValueError, "base_url"):
+                RunJournal(p, resume=True, identity=moved)
 
     def test_resume_rejects_legacy_rows_without_identity(self):
         with tempfile.TemporaryDirectory() as td:

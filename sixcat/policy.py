@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -94,7 +95,7 @@ class Policy:
     source: str = ""
 
     def __post_init__(self) -> None:
-        if isinstance(self.temperature, bool) or not isinstance(self.temperature, (int, float)) or self.temperature < 0:
+        if isinstance(self.temperature, bool) or not isinstance(self.temperature, (int, float)) or not math.isfinite(self.temperature) or self.temperature < 0:
             raise ValueError("policy temperature must be a non-negative number")
         for field_name in ("top_p", "min_p"):
             value = getattr(self, field_name)
@@ -525,7 +526,7 @@ def resolve_policy(
     )
 
 
-_INLINE_THINK = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
+_INLINE_THINK = re.compile(r"<think\b[^>]*>(.*?)(?:</think\s*>|$)", re.IGNORECASE | re.DOTALL)
 _POLICY_PROBE_PROMPT = (
     "What is 17 multiplied by 23? Work it out internally as appropriate, "
     "then give the final integer."
@@ -541,7 +542,7 @@ def _as_nonneg_int(value: Any) -> int | None:
 def thinking_evidence(out: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
     """Classify whether a completion revealed, hid, or omitted thinking traces."""
     dedicated = str(out.get("reasoning_content") or "").strip()
-    inline_matches = _INLINE_THINK.findall(str(out.get("text") or ""))
+    inline_matches = _INLINE_THINK.findall(str(out.get("source_text") or out.get("text") or ""))
     inline = "\n".join(match.strip() for match in inline_matches if match.strip())
     usage = out.get("usage") or {}
     if not isinstance(usage, Mapping):
@@ -595,7 +596,7 @@ def probe_policy(client: Any) -> dict[str, Any]:
         return {
             "status": "failed",
             "expected_thinking": expected_thinking,
-            "reason": f"probe request failed: {exc}",
+            "reason": f"probe request failed: {type(exc).__name__}",
         }
 
     evidence = thinking_evidence(out)

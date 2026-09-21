@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from .generation import complete_for_item
+
 import copy
 import json
+import math
 from typing import Any
+from .receipts import completion_row
+from .score import _strip_reasoning
 
 TOOLS = [
     {
@@ -125,7 +130,10 @@ def _tool_answer_ok(want: Any, tool_calls: list[Any], text: str) -> tuple[bool, 
     if isinstance(want, str):
         return bool(calls) and calls[0][0] == want, calls[0][0] if calls else None
     expected = [(name, arguments) for name, arguments in want]
-    return calls == expected, calls
+    return len(calls) == len(expected) and all(
+        actual_name == expected_name and _typed_equal(actual_args, expected_args)
+        for (actual_name, actual_args), (expected_name, expected_args) in zip(calls, expected)
+    ), calls
 
 
 def run_tools(client, limit: int | None, session=None, max_tokens: int | None = None) -> list[dict]:
@@ -146,10 +154,12 @@ def run_tools(client, limit: int | None, session=None, max_tokens: int | None = 
 
     def work(payload):
         name, want, prompt = payload
-        out = client.complete(prompt, max_tokens=mt, tools=TOOLS)
+        out = complete_for_item(client, prompt, max_tokens=mt, tools=TOOLS)
+        out = dict(out)
+        out["text"] = _strip_reasoning(out["text"] or "")
         ok, pred = _tool_answer_ok(want, out["tool_calls"], out["text"] or "")
         usage = out.get("usage") or {}
-        return {
+        return completion_row(out, **{
             "ok": ok,
             "pred": pred,
             "gold": want,
@@ -163,7 +173,23 @@ def run_tools(client, limit: int | None, session=None, max_tokens: int | None = 
             "ctok": usage.get("completion_tokens"),
             "ptok": usage.get("prompt_tokens"),
             "request_params": out.get("request_params"),
-        }
+        })
 
     run_pending(session, "tools", pending, work, rows)
     return rows
+
+
+def _typed_equal(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, bool):
+        return type(actual) is bool and actual == expected
+    if isinstance(expected, (int, float)):
+        return type(actual) in (int, float) and math.isfinite(actual) and actual == expected
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and actual.keys() == expected.keys() and all(
+            _typed_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and len(actual) == len(expected) and all(
+            _typed_equal(a, b) for a, b in zip(actual, expected)
+        )
+    return type(actual) is type(expected) and actual == expected

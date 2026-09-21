@@ -61,7 +61,7 @@ class TestResultLoading(unittest.TestCase):
         self.assertEqual(warning_text.count("WARNING: LEGACY V1 RESULT"), 2)
         self.assertIn("policy=strict", warning_text)
         self.assertIn("parser=v1", warning_text)
-        self.assertIn("not comparable to current strict/parser-v4", warning_text)
+        self.assertIn("not comparable to current strict/parser-v5", warning_text)
         self.assertEqual(first["policy"]["name"], "strict")
         self.assertEqual(first["parser"], "v1")
         self.assertEqual(first["policy_source"], "legacy-v1-assumption")

@@ -407,7 +407,7 @@ class TestFetchServerPropsBothSources(unittest.TestCase):
             url = getattr(req, "full_url", None) or req
             return FakeResp(payloads[url])
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("sixcat.client.open_request", side_effect=fake_urlopen):
             result = fetch_server_props("http://host/v1", timeout=1.0)
 
         self.assertEqual(result["source"], "llama_cpp_props")
