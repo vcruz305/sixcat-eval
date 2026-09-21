@@ -43,8 +43,13 @@ def _read_rows(path: Path) -> tuple[list[dict[str, Any]], list[int], dict[str, A
                 continue
             if "_sixcat_retry" in item:
                 continue
+            if item.get("cat") not in CATEGORY_ORDER or item.get("scored") is False:
+                continue
             ident = (str(item.get("cat")), str(item.get("key") or item.get("id") or ""))
-            latest[ident] = item
+            if (run_identity or {}).get("attempt_policy") == "first-scored-response-v1":
+                latest.setdefault(ident, item)
+            else:
+                latest[ident] = item
         else:
             invalid_lines.append(index + 1)
     rows = list(latest.values())

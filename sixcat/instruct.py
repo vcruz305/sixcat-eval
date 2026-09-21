@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections import Counter
 from typing import Any
 
 from langdetect import DetectorFactory, LangDetectException, detect
 
 DetectorFactory.seed = 0
+_LANGUAGE_LOCK = threading.Lock()
 
 SUPPORTED_INSTRUCTION_IDS = frozenset(
     {
@@ -63,7 +65,8 @@ def _language_is(response: str, expected: str) -> bool:
     if not response.strip() or not expected:
         return False
     try:
-        return detect(response) == expected
+        with _LANGUAGE_LOCK:
+            return detect(response) == expected
     except LangDetectException:
         return False
 

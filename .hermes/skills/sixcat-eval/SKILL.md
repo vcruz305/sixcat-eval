@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.5.0
+version: 0.6.0
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -18,6 +18,26 @@ Run Sixcat against either the exact model backing the current Hermes session or
 an alternate OpenAI-compatible endpoint. Ask for the target first, preview the
 exact reviewed sampling policy, keep the run observable, and report only from
 saved receipts.
+
+## 0.6.0 execution contract
+
+Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
+full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
+has capacity; default 1 is conservative for a memory-tight local endpoint. The
+scheduler interleaves categories while retaining their frozen hardest-first
+orders. Stdio is serial and requires concurrency 1.
+
+The deadline covers active requests and preflight. Save and label incomplete
+results; do not promise the full 120 can finish on any given hardware. `both`
+shares one total deadline. Live throughput comes from `execution.throughput_tps`,
+not the historical request-weighted `suite_tps`. Preserve each execution segment.
+
+Use distinct artifact IDs/output paths for different quantizations. An operator
+artifact ID and server metadata are recorded evidence, not proof of the weights.
+Do not silently resume old parser-v4 journals into v5. Never present selective
+failure-retry diagnostics as an improved first-response score. Offline `rescore`
+reuses saved generations; `export-evalplus` only exports and does not execute an
+external benchmark. Both are opt-in.
 
 ## When to Use
 
@@ -50,8 +70,8 @@ actual model server. If no target is reachable, report that prerequisite.
 
 - Standard run: `--limit 20 --max-minutes 30` means **20 scored items per
   category**, about 120 scored rows total. It never means 20 per source dataset.
-- Current scorer/parser identity: `v4`; older `v2`/`v3` receipts are readable
-  but non-comparable to new challenge-selection/tool-grader runs.
+- Current scorer/parser identity: `v5`; older `v2`/`v3`/`v4` receipts are readable
+  but non-comparable to parser-v5 runs.
 - Vendor-recommended temperature/settings use seed `1` for repeatability when a
   reviewed model mapping exists. Custom mode may use any integer or no seed.
 - New run: use `--no-resume` and a fresh artifact basename.
@@ -116,7 +136,7 @@ questionnaire. Do not use `--no-resume`.
 4. The live Hermes model/provider must match `plan.model`. If they differ, refuse
    to merge; a different model is a new run, not a continuation.
 5. Launch through `hermes_runner.py` with those argv and **no** `--no-resume`.
-   Loopback proxy ports in the old journal are not an identity mismatch.
+   A loopback proxy port may change only when the journal recorded the same verified upstream identity; otherwise start a fresh journal.
 6. Report the rewritten JSON as one merged receipt.
 
 ### 1. Ask which target to evaluate
@@ -174,215 +194,141 @@ terminal(
 
 The live model/provider come from the current Hermes runtime metadata. For
 another profile, ask which profile, then omit the two `--runtime-*` arguments so
-the runner resolves that profile's configured model/provider.
-
-Hermes' normal API server is an **agent facade**: it adds the profile prompt,
-tools, memory, and agent loop, and its `/v1/models` entry is a profile alias.
-That is useful for apps but is not a raw model benchmark. The bundled runner
-instead uses Hermes' provider/auth resolver and a temporary authenticated
-loopback proxy to call the exact raw model with Sixcat's sampling parameters.
-
-Completion criterion: target kind is explicit. Do not inspect, preflight, or
-preview yet. The next assistant turn must be the follow-up `clarify` call.
+the runner resolves the profile's configured default route.
 
 ### 2. Immediately ask the remaining questions
 
-After the target answer, ask the follow-up `clarify` in the same turn you
-acknowledge it. Do not run `inspect`, `preflight`, `terminal`, or any other
-tool first. Do not write a long policy preview first. Every question, including
-dependent follow-ups, must use `clarify` with selectable options. Never ask the
-user to type a free-form sampling string, size, profile name, or URL as the
-only input.
+As soon as the user answers the target question, the **very next interaction**
+must be the setup form below. Do not inspect, probe, preflight, discover files,
+or run any terminal command between the target answer and these questions.
 
-If the target is **another Hermes profile**, immediately offer up to four live
-profile names as choices (plus Other). If it is **an alternate endpoint**,
-immediately offer the common loopback candidates as choices (plus Other):
-
-- `http://127.0.0.1:8085/v1`
-- `http://127.0.0.1:8083/v1`
-- `http://127.0.0.1:8000/v1`
-- `http://127.0.0.1:30000/v1`
-
-Then immediately send one `clarify` whose `questions` array has four items.
-Do not inspect, preflight, or write a "setup form" chat message first. Every
-item MUST include its own `choices`. This is the required payload:
+Use a **single** `clarify` call with **four** items in `questions`. Every item
+must include a non-empty `choices` array. Do not ask these as plain chat text and
+do not omit the choices from the tool call. Example shape:
 
 ```text
 clarify(
-  question='Sixcat setup',
   questions=[
     {
-      question='🎛️ How should the model sample answers?',
-      choices=[
-        '🏷️ Vendor-recommended temperature/settings — reviewed card, seed 1',
-        '🔬 Compare baseline vs vendor settings — two receipts plus a delta',
-        '🧊 Deterministic temperature baseline — temperature 0',
-        '🎛️ Custom sampling — pick a preset row next'
+      'question': '🎚️ How should Sixcat sample this model?',
+      'choices': [
+        '🏷️ Vendor-recommended settings (recommended when mapped) — reviewed model-card temperature/top-p/top-k/min-p + seed 1',
+        '🧊 Deterministic baseline — temperature 0 for cross-run comparison',
+        '⚖️ Compare both — run strict and vendor profiles separately',
+        '🎛️ Custom settings — I’ll enter an exact temperature'
       ]
     },
     {
-      question='📏 How large should the evaluation be?',
-      choices=[
-        '⚖️ Standard — 20 items per category, about 120 total, 30-minute cap',
-        '⚡ Quick smoke — 3 items per category, about 18 total, 10-minute cap',
-        '🧭 Full battery — every shipped row, no wall cap',
-        '🛠️ Custom size — pick a preset row next'
+      'question': '🧪 How large should this run be?',
+      'choices': [
+        '⭐ Standard (recommended) — 20 per category, ~120 scored rows, 30-minute cap',
+        '⚡ Quick — 10 per category, ~60 scored rows, 30-minute cap',
+        '📚 Full — all 884 shipped rows, 30-minute cap unless explicitly uncapped',
+        '🔢 Custom — choose a per-category limit'
       ]
     },
     {
-      question='🧪 Should Sixcat execute generated HumanEval code?',
-      choices=[
-        '🛡️ Host-guarded HumanEval — short-lived subprocess, not a security sandbox',
-        '🚫 Skip generated-code execution — Code becomes n/a'
+      'question': '🐍 HumanEval runs generated Python in a guarded host subprocess, not a security sandbox. What should Sixcat do?',
+      'choices': [
+        '✅ Keep HumanEval enabled (recommended for a model I trust) — temporary process + AST/import guards + timeout',
+        '🛡️ Skip code execution — safest for an untrusted endpoint'
       ]
     },
     {
-      question='🧠 Should reasoning/thinking be enabled?',
-      choices=[
-        '🧠 Thinking on — recommended when supported, even if the API hides CoT',
-        '⚡ Thinking off — faster baseline; do not pick this just because traces are hidden'
+      'question': '🧠 Should model reasoning/thinking be enabled?',
+      'choices': [
+        '🧠 Thinking on (recommended when supported) — allow the model’s reasoning mode',
+        '⚡ Thinking off — no reasoning trace'
       ]
     }
   ]
 )
 ```
 
-If a platform cannot batch, send those four `clarify` calls one after another,
-each with the same `choices`. Never send the question without `choices`.
+If this Hermes surface cannot provide a `clarify` tool with explicit choices,
+show those same four option groups as structured numbered options and wait for
+answers. Do not silently choose defaults.
 
-Always offer the four sampling choices now; do not wait to learn whether a
-reviewed mapping exists. If vendor later has no mapping, ask the family-adopt
-question in step 4.
+If the user chooses **Custom** sampling, ask one more `clarify` with `choices`
+for temperature: `0`, `0.2`, `0.6`, `1.0`. Then ask top-p as another
+option-only `clarify`: `1.0`, `0.95`, `0.9`, `Other / omit`. Ask for a typed
+number only after the user chooses `Other / omit` and then chooses `Other` from a
+second option-only question. Optional top-k/min-p/seed follow the same pattern.
 
-#### A. 🎛️ How should the model sample answers?
+If the user chooses **Custom** size, ask one more `clarify` with `choices`:
+`5 per category`, `10 per category`, `20 per category`, `Other`. Ask for a typed
+integer only after `Other` is selected. If code execution is skipped, state that
+Code will be `n/a` and excluded from the overall mean.
 
-- **🏷️ Vendor-recommended temperature/settings (recommended)** — use the
-  reviewed model-card temperature and token filters; Sixcat uses seed `1` so
-  repeated runs are easier to compare. Thinking is selected separately below.
-  If preview later shows no reviewed mapping, do not launch a fake vendor run.
-- **🔬 Compare baseline vs vendor settings** — run the deterministic baseline
-  first, then the vendor-recommended settings, with separate receipts and a delta.
-- **🧊 Deterministic temperature baseline** — temperature `0` and no seed unless
-  the user explicitly supplies one. Thinking is selected separately below.
-- **🎛️ Custom sampling** — choose one of the preset sampling rows below.
+### 3. Resolve the target after all answers exist
 
-If Custom is selected, immediately ask one follow-up `clarify` with options.
-Do not use a fill-in template:
+**Current/other Hermes model**
 
-- **🌡️ temperature=0.7, no filters (recommended custom)** — `--policy custom --temperature 0.7`
-- **🏷️ temperature=1.0, top_p=0.95** — GLM-5.x / many thinking-model cards
-- **🎯 temperature=0.6, top_p=0.95, top_k=20, min_p=0** — Qwen3-style thinking
-- **🧊 temperature=0.0, no filters** — greedy custom
-
-Restate the resolved flags before execution.
-
-#### B. 📏 How large should the evaluation be?
-
-- **⚖️ Standard (recommended)** — **20 scored items per category**, **about 120
-  scored rows total**, with a 30-minute wall-clock safety cap.
-- **⚡ Quick smoke** — 3 scored items per category, about 18 total, with a
-  10-minute cap; useful for checking plumbing, not ranking models.
-- **🧭 Full battery** — every shipped row (`--full --max-minutes 0`); warn that it
-  can exceed an hour and cost substantially more on hosted models.
-- **🛠️ Custom size** — choose one of the preset size rows below.
-
-If Custom size is selected, immediately ask one follow-up `clarify` with options:
-
-- **5️⃣ 5 per category, 15 minutes**
-- **🔟 10 per category, 20 minutes**
-- **4️⃣0️⃣ 40 per category, 60 minutes**
-- **♾️ 20 per category, no wall cap**
-
-The `--limit` value is always per category. Knowledge may draw from MMLU, ARC,
-HellaSwag, and WinoGrande, but those sources share the category cap; `--limit 20`
-must never become 80 Knowledge rows.
-
-Limited runs use frozen `challenge-v1` selection, not file prefixes: Quick starts
-with the hardest few items and Standard uses a hard/diverse 20. Code difficulty
-uses an independent 49-model HumanEval ranking; Full runs all 164 HumanEval tasks.
-Tools grade exact arguments, call count/order, multi-call requests, distractors,
-and abstention. Every receipt includes the selection profile and fingerprint;
-Full preserves the complete source corpus.
-
-#### C. 🧪 Should Sixcat execute generated HumanEval code?
-
-- **🛡️ Host-guarded HumanEval (recommended)** — execute generated Python in a
-  short-lived subprocess with `-I -S`, sanitized environment, temp directory,
-  timeout, AST escape checks, restricted builtins/imports, and a harness-owned
-  success receipt. This is low overhead but **not a security sandbox**.
-- **🚫 Skip generated-code execution** — add `--skip-code-exec`; Code becomes
-  `n/a` and the overall is visibly flagged `code-exec-disabled`.
-
-#### D. 🧠 Should reasoning/thinking be enabled?
-
-- **🧠 Thinking on (recommended when supported)** — request the model's reasoning
-  mode and automatically raise category token budgets. Recommend this for
-  reasoning-capable models, including cloud APIs that hide thinking token
-  blocks. Hidden or unrevealed traces are not a reason to turn thinking off.
-- **⚡ Thinking off** — faster, cheaper baseline. Do not choose this just because
-  the provider does not return `reasoning_content` or `<think>` blocks.
-
-Choose **On** by default unless the user picked Off. Sixcat's pre-run probe
-auto-detects visible, hidden, or unrevealed thinking and still continues when
-On was selected. It only fail-closes Thinking Off if a visible reasoning trace
-leaks. Map the choice to `--thinking on|off` for every sampling mode, including
-strict, vendor-recommended, compare, and custom.
-
-Completion criterion: exact sampling values, explicit thinking choice,
-per-category item cap/full mode, wall cap, and code-execution mode are explicit.
-All of those answers came from option rows, not a typed template.
-
-### 3. Detect the endpoint and model
-
-Only after the questions are answered, run the bundled preflight through
-`terminal` from the project root:
+Run inspect only now. It returns JSON with one endpoint/model/provider and a
+policy preview. For another profile, replace `current` with the selected profile.
+The helper reads config through `hermes_cli.config.load_config()` and
+`hermes_cli.config.load_profiles()` instead of parsing TOML itself.
 
 ```text
 terminal(
-  command='python "${HERMES_SKILL_DIR}/scripts/preflight.py" --json',
+  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" inspect --profile current --runtime-model <live-model> --runtime-provider <live-provider> --json --policy vendor',
   workdir='<project-root>'
 )
 ```
 
-For **Alternate OpenAI-compatible endpoint**, run the bundled preflight. If the
-user named an endpoint or model, pass `--base-url <url>` and an exact
-`--model <id>`. The helper checks `/v1/models`; it does not trust a filename,
-old journal, or user-facing server nickname.
+If the returned policy source says `fallback=strict`, use the unmapped-vendor
+branch in step 4 before launching.
 
-If `SIXCAT_API_KEY` is set, require one explicit endpoint before preflight. Never
-send that credential while scanning the default candidate list.
+**Alternate endpoint**
 
-If multiple endpoints or models are found, use `clarify` when available and ask
-the user to choose. Never pick the first one silently. Completion criterion:
-one base URL and one exact model ID are selected.
+Discover unauthenticated endpoints only after all four answers are known. Use
+`SIXCAT_BASE_URL` first if set; otherwise probe common localhost bases. An
+explicit user URL wins. Query `<base>/models`, keep its candidate IDs, and ask
+the user to choose when there is more than one. Never use an exact model string
+that is absent from the selected endpoint.
 
-For a Hermes runtime target, the `inspect` receipt replaces endpoint discovery.
-It must say `target_kind=hermes_runtime_model`, show the exact profile/model/
-provider, report `auth=resolved`, and state that the agent facade is bypassed.
+If `SIXCAT_API_KEY` is set, do not probe multiple bases. Require one explicit
+`SIXCAT_BASE_URL` (or the URL the user just supplied) so the credential has one
+known destination.
 
-### 4. Preview what will run
+### 4. Preview settings before execution
 
-After the questions are answered and the target is resolved, show the exact
-target, the resolved settings, and a plain-English explanation. Never show only
-internal words like `vendor`, `strict`, or `seed` and expect the user to know
-what they mean:
+Show a concise receipt before spending benchmark time:
 
-- **Temperature controls randomness**: `0` is the most repeatable; higher values
-  allow more varied answers.
-- **Top-p, top-k, and min-p filter** which next-token choices remain available.
-  `none` means Sixcat does not send that control.
-- **Thinking controls whether** the endpoint is asked to use reasoning mode.
-  Hidden or unrevealed thinking token blocks still count as thinking on.
-- **Seed helps repeat** the same sampling path when the endpoint supports seeds;
-  **some endpoints ignore it**, so it is not a universal reproducibility promise.
-- Show category token budgets, cited settings source, policy fingerprint, and every
-  fallback or ambiguity warning.
-- After the target is resolved, run `python -m sixcat preflight --base-url <url>
-  --model <id>` or read `preflight` from a result JSON. Show served context, source
-  field, safe input budget, ETA range with confidence, and warning codes. This is
-  observe-only: it is not a score, it must not set `--max-minutes`, and metadata
-  failure must not abort the run. `--ctx N` records an operator override as
-  configured, not detected.
+- model ID;
+- base URL (alternate) or Hermes provider/profile (runtime bridge);
+- model identity source;
+- model-card URL, mapping family, and exact temperature/top-p/top-k/min-p/seed;
+- thinking setting and category token budgets;
+- requested scope and 30-minute cap;
+- code execution mode;
+- policy fingerprint;
+- parser version.
+
+For **all** target types, run Sixcat's observe-only preflight before launch so
+context and ETA diagnostics use the same contract. Alternate endpoint example:
+
+```text
+terminal(
+  command='python -m sixcat preflight --base-url <url> --model <id> --policy <strict|vendor> <optional --policy-family family> --thinking <on|off> --limit <N> --json',
+  workdir='<project-root>'
+)
+```
+
+Hermes-runtime example (use the selected live route, not the normal agent API):
+
+```text
+terminal(
+  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" preflight --profile current --runtime-model <live-model> --runtime-provider <live-provider> -- --policy <strict|vendor> <optional --policy-family family> --thinking <on|off> --limit <N> --json',
+  workdir='<project-root>'
+)
+```
+
+Read `preflight.context`, `preflight.eta`, `policy`, and `policy_fingerprint` from
+the JSON. Show served context, source field, safe input budget, ETA range with
+confidence, and warning codes. This is observe-only: it is not a score, it must
+not set `--max-minutes`, and metadata failure must not abort the run. `--ctx N`
+records an operator override as configured, not detected.
 
 A request for internal `--policy vendor` that resolves to strict is a fallback,
 not a vendor-recommended receipt. Never infer settings from model size or vendor
@@ -518,13 +464,13 @@ nonzero, immediately ask one option-only `clarify`. Do not suggest a full
 and add one `--retry` flag so the new rows merge into the existing receipt:
 
 - **▶️ Continue remaining only (recommended after TIMEUP)** — `--retry remaining`
-- **🔁 Retry failed only** — `--retry failed`; keeps PASS rows and replaces FAIL
-  rows. Unscored remaining items stay unscored.
+- **🔁 Retry failed only** — `--retry failed`; preserves all first-response headline
+  verdicts and records a separate latest-attempt diagnostic. Unscored remaining items stay unscored.
 - **🧩 Retry failed and remaining** — `--retry incomplete`
 - **📁 Leave this receipt as-is**
 
-Offer only the choices that apply. After that pass, report the merged overall
-from the rewritten JSON, including `continuation.failed_rescored`.
+Offer only the choices that apply. After that pass, report the immutable first-response overall
+from the rewritten JSON and label `diagnostics.overall` separately as a latest-attempt diagnostic, never pass@1. Include `continuation.failed_rescored`.
 
 ## Additional Guardrails
 

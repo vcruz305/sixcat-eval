@@ -1,0 +1,910 @@
+# Sixcat 0.5.1 Release Notes
+
+**Release date:** 2026-08-28
+
+**Previous release:** 0.5.0
+
+**Status:** final release
+
+Sixcat 0.5.1 makes `--transport stdio` a first-class, field-validated way to
+benchmark a model that has no exportable API key, fixes a HumanEval runner
+bug that silently failed canonical items, and makes stdio receipts retryable.
+A self-administered GLM-5.3-Flash run (overall 91.7, 120 items) cross-validated
+the offline scorer and the stdio transport item for item.
+
+## Harness-driven completions over stdio (field-validated)
+
+`--transport stdio` (new in 0.5.1) lets ZCode, Claude Code, Codex, or any
+coding harness answer Sixcat's JSONL `complete` requests on stdin while all
+grading, journaling, and identity handling stay inside Sixcat. This is the
+supported path for cloud models that are reachable only *inside* a harness —
+the receipt carries `transport=stdio` and `base_url=stdio://harness`, and it
+cannot silently mix with an OpenAI/llama.cpp journal.
+
+The 0.5.1 release was validated by the first end-to-end stdio battery run:
+121 requests (1 unscored policy probe + 120 scored items) driven through the
+protocol, with every scored prompt hash-matched against a blind answer sheet.
+The official stdio receipt reproduced the independent offline replay exactly:
+knowledge 60.0 / math 100.0 / truth 95.0 / instruct 95.0 / code 100.0 /
+tools 100.0, overall[vendor] 91.7. The run produced `docs/harness-stdio.md`'s
+new **Driver requirements** section — answer the policy probe, drain stderr
+concurrently (stdout-sequential drivers deadlock), apply `request_params` to
+the raw model call, send `finish:"length"` on truncation, and set
+`PYTHONIOENCODING=utf-8` on Windows.
+
+## HumanEval: prompt helpers survive restated entry defs
+
+The runner truncated everything before a restated entry-point `def`, silently
+discarding prompt-provided helpers. For HumanEval/32 (`find_zero`, which relies
+on the prompt's `poly()` helper) that was a guaranteed `NameError` for any
+model that restates the signature — most of them. The runner now concatenates
+`prompt + completion` (a restated def simply overrides the stub) and falls back
+to the historical truncation only when concatenation cannot be guarded.
+
+## stdio receipts are retryable
+
+Saved results now record `transport`, and `sixcat run retry-plan` emits
+`--transport stdio` for stdio receipts. Previously the documented retry flow
+regenerated an OpenAI-transport argv that could never resume a stdio journal.
+
+## Data-lint suite and upstream anchor audit
+
+`tests/test_data_lint.py` adds ten invariants over the shipped data: MC answer
+keys within choice range per real schema (MMLU / ARC / HellaSwag / WinoGrande /
+TruthfulQA), GSM8K `####` extractability, every shipped IFEval instruction id
+implemented (the "unknown id fails closed" contract), kwargs alignment, tool
+expectation shapes, and challenge-selection indices referencing live rows.
+
+Three suspicious battery items were verified against upstream and are
+**deliberately unpatched** for anchor comparability; see
+`docs/eval-run-findings.md`: the google/IFEval letter-o prompt/grader
+contradiction, tinyTruthfulQA's "Haslam." key, and the malformed tinyMMLU
+"Cultural homogenization." stem. A future `challenge-v2-clean` selection
+profile is the supported way to skip them.
+
+## Docs and skill
+
+- `docs/harness-stdio.md`: driver requirements, tool-call answer shape,
+  retry/`--ctx` notes.
+- `.hermes` skill bumped to 0.5.0 with a fourth target choice — harness-driven
+  stdio — for models reachable only inside the harness.
+- README documents `--policy-family` and `--concurrency`.
+
+## Upgrade
+
+```bash
+git fetch origin --tags && git checkout v0.5.1
+python -m pip install -e .
+python -m pytest -q   # 292 passed, 179 subtests
+```
+
+Think-on 0.5.x scores remain comparable within 0.5.x; the 0.5.0
+non-comparability break versus 0.4.x is unchanged.
+
+---
+
+# Sixcat 0.5.0 Release Notes
+
+**Release date:** 2026-08-28
+
+**Previous release:** 0.4.6
+
+**Status:** final release
+
+Sixcat 0.5.0 stops using another family's p95 think length as the score cap,
+reports think vs answer tokens when the engine provides them, and fails empty
+truncated think instead of mining letters out of `<think>`. GLM-5.x vendor
+runs pre-close think so Q2-class GGUFs can emit an answer channel at all.
+
+Think-on 0.5 scores are **not comparable** to 0.4.6 think-on cards.
+
+## Task-shaped safety ceilings (not Qwen/Ornith p95)
+
+0.4.x thinking-on used a global table frozen from Ornith/Qwen traces
+(knowledge **1597**, math 2048, tools 768, …). That is a diet, not a protocol.
+A GLM-5.3 Flash Q2 run on that table filled 1597 tokens of `<think>`, never
+wrote `</think>`, and scored empty `pred` with `finish=length`.
+
+0.5 thinking-on uses **task** ceilings:
+
+| Category | Strict / no-think | Thinking-on ceiling |
+|---|---:|---:|
+| knowledge | 768 | 8192 |
+| math | 1197 | 16384 |
+| truth | 64 | 8192 |
+| instruct | 1281 | 32768 |
+| code | 1024 | 32768 |
+| tools | 256 | 16384 |
+
+`THINKING_BUDGETS` stays in code as the 0.4.x fingerprint / calibration
+receipt. It is not the thinking-on score cap. `--budget CATEGORY=N` still
+overrides one category. Family-specific budget stanzas are not required.
+
+These ceilings are safety rails. A `trunc_in_think` row still voids
+comparability for that item.
+
+## Reasoning vs answer tokens
+
+Every journal row now stores `rtok` / `atok` from the API split
+(`usage.reasoning_tokens` or `completion_tokens_details.reasoning_tokens`).
+`atok = max(ctok - rtok, 0)` only when both are integers. If the engine omits
+the split (llama.cpp often does), the cells are **`n/a`** — never
+`len(reasoning_content)/4`.
+
+The printed table adds a tokens block: per-category `rtok`, `atok`,
+`empty_answer`, `trunc_in_think`, plus a suite footer.
+
+## Truncated think is a fail
+
+If `finish=length` and the answer channel is empty, the row is
+`trunc_in_think`, `pred=""`, `ok=false`. Sixcat does not parse A/B/C or
+`####` out of `reasoning_content`. A warning is printed when any category
+has `trunc_in_think>0`.
+
+Default `--request-timeout` is **1800s** so a 32k think decode is not an
+HTTP timeout that looks like an empty answer.
+
+## GLM-5.x: leave think / emit an answer
+
+Stock `zai-org/GLM-5.3-Flash` jinja always opens `<think>` and never
+mentions `</think>` to llama.cpp's parser, so `--reasoning-budget` does not
+arm. `<|user|>` as a stop also fires **inside** think.
+
+0.5 vendor `glm-5.x` therefore:
+
+- keeps `reasoning_effort=high` (jinja only honors `low`/`high`; `max` is
+  the template fallback and is worse on this family)
+- sets `preclose_think` so `chat_template_kwargs.enable_thinking=false`
+- sends stop sequences
+  `<|system|>`, `<|user|>`, `<|end|>`, `<|eot|>`, `<|eot_id|>`, `<|endoftext|>`
+
+That only works if the **served** chat template pre-closes when
+`enable_thinking` is false. Ship file:
+
+`templates/GLM-5.3-Flash-chat-template-endthink.jinja`
+
+llama-server: `--jinja --chat-template-file <that file>`
+
+This is **answer-mode**, not “Q2 learned to close think.” Thinking traces are
+empty on purpose. Do not compare it to a think-on card from another family.
+
+Live check on Spark 78f1 (Q2_K + DFlash2 Q4, `-c 98304`): greedy France MC
+was `pred=A` / `finish=stop` / 8 tokens, 3/3. A 0.5.0 journal on that serve
+showed **0 empty preds** after 20 knowledge + early math, versus 0.4.6
+think-on where every row was `finish=length` at 1597. That in-progress
+journal is **not** a published overall.
+
+## Compatibility
+
+- New thinking-on policy fingerprint. Do not resume a 0.4.6 think-on JSONL
+  under 0.5.
+- Compare 0.4.6 vs 0.5 think-on is apples/oranges.
+- `rtok`/`atok` absent on old journals load as missing (`n/a`).
+
+## Verification receipts
+
+- `python -m pytest -q`: **271 passed**.
+
+# Sixcat 0.4.6 Release Notes
+
+**Release date:** 2026-08-27
+
+**Previous release:** 0.4.5
+
+**Status:** final release
+
+GLM-5.x vendor family now sends `reasoning_effort=high` by default. GLM chat
+templates only honor `low`/`high`; any other value (including `max`) falls
+through to the template's `max` path and never leaves the think block.
+
+The client also copies `reasoning_effort` into `chat_template_kwargs` so llama.cpp
+Jinja actually sees `high`.
+
+# Sixcat 0.4.5 Release Notes
+
+**Release date:** 2026-08-27
+
+**Previous release:** 0.4.4
+
+**Status:** final release
+
+Sixcat 0.4.5 treats served-context detection and probe-cost estimation as
+observe-only preflight inputs, not a second scoring box.
+
+## Context is evidence, not a bare integer
+
+- `/props` and `/v1/models` are queried independently. Both raw payloads are
+  kept on `server_props`.
+- Candidates keep source, field path, layer (`runtime_total_ctx` vs
+  `native_max_ctx`), and model association.
+- Context is matched to the requested model. Ambiguous aliases and first-entry
+  `/v1/models` lists do not silently become `ctx=32768`.
+- Runtime disagreement uses the smaller value and emits `CTX_CONFLICT`.
+- `--ctx N` is recorded as `configured`, not detected.
+- Advertised context, output reserve, and `max(512, 2%)` safety margin produce
+  a safe input budget. That budget is printed; Phase 1 does not skip items.
+
+## Probe cost is a range
+
+- The existing thinking probe is reused. No second generate.
+- Usage prefers API token fields, including reasoning tokens when present.
+- ETA is a low/high range with confidence. Hidden reasoning without usage
+  metadata is `ETA_LOW_CONFIDENCE`, not a fake 256-token constant.
+- Suggested request timeout is recorded. `--max-minutes` is never derived from
+  the probe.
+
+## Operator surface
+
+- Result JSON includes `preflight` (`phase=observe`).
+- The printed table shows the preflight block.
+- `python -m sixcat preflight --model <id>` prints context diagnostics
+  without a generate. ETA ranges appear on scored runs from the thinking
+  probe.
+
+## Verification receipts
+
+- `python -m pytest -q`: **261 passed**.
+
+---
+
+# Sixcat 0.4.4 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.3
+
+**Status:** final release
+
+Sixcat 0.4.4 keeps every Hermes skill question on Telegram buttons and lets an
+unmapped model reuse a reviewed vendor family instead of typing temperatures
+or falling back to strict.
+
+## Option-only follow-ups
+
+- Every `clarify` call must include a non-empty `choices` array.
+- A question-only follow-up becomes a bare Telegram `?` with no buttons.
+- The setup form is one `clarify` whose four items each carry their own
+  `choices`. Missing choices on any item drop the buttons.
+
+## Adopt a reviewed vendor family
+
+- If vendor/compare has no catalog row, ask: adopt a listed family, enter
+  custom sampling, or stay on the deterministic baseline.
+- `python -m sixcat families --model <id> --json` suggests nearby families
+  and pages the catalog in groups of four.
+- `--policy vendor --policy-family glm-5.x` applies that recipe to an
+  unmapped or future model ID. The receipt source records `adopted-for=`.
+
+## Verification receipts
+
+- `python -m pytest -q`: **232 passed, 169 subtests passed**.
+
+---
+
+# Sixcat 0.4.3 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.2
+
+**Status:** final release
+
+Sixcat 0.4.3 keeps Hermes sessions on the latest checkout and lets an existing
+receipt rebuild its own merge command without guessing sampling flags.
+
+## Hermes skill release check
+
+- `/sixcat-eval` runs `scripts/check_release.py` against
+  `vcruz305/sixcat-eval` before any target, retry, or sampling question.
+- A newer GitHub release is an option-only update: fetch tags, check out the
+  release tag, then `pip install -e .`. A dirty worktree is reported and not
+  overwritten.
+- Network failures fail open. A current or newer-than-release checkout does not
+  add chatter.
+
+## Existing-receipt retry plan
+
+- `python -m sixcat retry-plan <result.json> --retry failed|remaining|incomplete`
+  reprints the merge argv from the saved policy, timeout, log, and out path.
+- Hermes-runtime loopback proxy port changes are not a journal identity
+  mismatch, so a later session can merge into the same receipt.
+
+## Verification receipts
+
+- `python -m pytest -q`: **227 passed, 169 subtests passed**.
+
+---
+
+# Sixcat 0.4.2 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.1
+
+**Status:** final release
+
+Sixcat 0.4.2 merges a follow-up pass into the original 30-minute receipt instead
+of asking for a full rerun when the wall cap leaves leftover or failed items.
+
+## Merged retry after TIMEUP
+
+- `--retry remaining` continues unscored items on the same `--log`/`--out`.
+- `--retry failed` rescores previous FAIL rows only, keeps PASS rows, and leaves
+  remaining unrun items untouched.
+- `--retry incomplete` retries failed items and then continues remaining ones.
+- New rows append to the journal (last write wins) and rewrite one merged JSON.
+- `--retry` cannot be combined with `--no-resume`.
+- Result JSON now includes a `continuation` object with remaining/failed counts.
+- `/sixcat-eval` asks an option-only follow-up after TIMEUP and must not suggest
+  a clean full rerun.
+
+## Verification receipts
+
+- `python -m pytest -q`: **222 passed, 169 subtests passed**.
+
+---
+
+# Sixcat 0.4.1 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.4.0
+
+**Status:** final release
+
+Sixcat 0.4.1 keeps the conversational `/sixcat-eval` flow moving, adds the
+reviewed GLM-5.x sampling family, and stops treating hidden cloud thinking as a
+failed thinking-on run.
+
+## Hermes skill follow-ups
+
+- After the target question, the next turn is the follow-up `clarify`. The skill
+  no longer inspects or preflights before asking sampling, size, code, and
+  thinking questions.
+- Every question uses selectable options. Custom sampling and custom size are
+  preset rows, not a typed `temperature=0.7, top_p=none, ...` template.
+- Thinking On stays the recommendation when a cloud API omits `reasoning_content`
+  or `<think>` blocks.
+
+## GLM-5.x vendor family
+
+- New reviewed family `glm-5.x` covers `glm-5`, `glm-5.1`, `glm-5.2`, and
+  `glm-5.3` (including `z-ai/glm-5.3` and `-free` aliases).
+- Official GLM-5.2 HLE/reasoning eval settings: `temperature=1.0`, `top_p=0.95`,
+  thinking on, `reasoning_effort=max`.
+- GLM-5.3 uses the same temperature/settings as GLM-5.2.
+
+## Hidden thinking probe
+
+- Thinking On no longer aborts when the provider hides or omits thinking token
+  blocks. The probe records `reasoning_exposure` as `visible`, `hidden`, or
+  `unrevealed` and continues.
+- The client now normalizes OpenAI-style `reasoning` text and usage
+  `reasoning_tokens` / `completion_tokens_details`.
+- Thinking Off still fail-closes if a visible reasoning trace leaks.
+
+## Verification receipts
+
+- `python -m pytest -q`: **213 passed, 169 subtests passed**.
+
+---
+
+# Sixcat 0.4.0 Release Notes
+
+**Release date:** 2026-08-22
+
+**Previous release:** 0.2.0
+
+**Status:** final release
+
+Sixcat 0.4.0 makes the short battery materially harder, fixes per-category scope,
+and lets Hermes evaluate the raw model powering the current agent profile rather
+than accidentally benchmarking the agent facade. It includes the unreleased 0.3.0
+work; there is intentionally no separate v0.3.0 tag.
+
+## Scoring and challenge integrity
+
+- Limited runs use frozen `challenge-v1` selection. Quick starts with the hardest
+  few tasks and Standard uses a hard/diverse subset instead of easy file prefixes.
+- Knowledge, Math, and Truth difficulty comes from cross-model Sixcat receipts.
+  Instruction uses a frozen constraint-density ranking over the shipped IFEval set.
+- Code uses an independent 49-model HumanEval difficulty ranking. Quick begins with
+  HumanEval/145, /132, and /130; Standard uses 20 hard tasks; Full executes all
+  164 HumanEval tasks.
+- Tools now grade exact arguments, call count/order, multi-call requests,
+  distractors, and abstention. Historical first-tool-name-only grading is retired.
+- Parser/grader identity advances to `v4`. Selection profile and fingerprint are
+  persisted and enforced across resume and comparison boundaries.
+- Full now contains 884 rows. Full mode preserves every shipped source row while
+  Quick and Standard use challenge-first ordering.
+
+## Correct run scope and sampling controls
+
+- `--limit` is a per-category cap. Standard `--limit 20` targets approximately
+  120 rows total; Knowledge splits those 20 slots across MMLU, ARC, HellaSwag,
+  and WinoGrande instead of expanding to 80 rows.
+- Result and journal identity records `limit_scope: per_category` so legacy
+  per-dataset journals cannot resume silently under the corrected contract.
+- `--policy custom` accepts exact temperature, top-p, top-k, min-p, and seed values.
+- Thinking On/Off is a separate choice for every sampling mode. Thinking On is
+  recommended for reasoning-capable endpoints and raises category token budgets.
+  The pre-run probe still fails closed if the endpoint does not honor the choice.
+
+## Hermes current-model evaluation
+
+- `/sixcat-eval` asks first whether to evaluate the model powering the current
+  Hermes session, another Hermes profile, or an alternate OpenAI-compatible endpoint.
+- Current/profile mode resolves the profile's live model and provider and exposes a
+  short-lived loopback proxy to the raw provider model. It does not score the Hermes
+  agent facade, system prompt, memory, tools, or agent loop.
+- The raw proxy pins model/provider identity, rejects silent fallback, never prints
+  credentials, and closes in a `finally` block. The skill never kills, rebinds, or
+  swaps a user's model server.
+- Pre-run questions now carry distinct emoji, plain-language trade-offs, and a
+  preview of endpoint, model identity, policy, seed, budgets, thinking, scope, and
+  code-execution mode before launch.
+
+## Compatibility and migration
+
+- Parser-v2 and parser-v3 artifacts remain readable but are not directly comparable
+  to parser-v4 challenge runs.
+- Existing journals from before 0.4.0 require a new log or `--no-resume` when their
+  parser, limit scope, selection fingerprint, or policy identity differs.
+- `--full --max-minutes 0` is the explicit uncapped complete 884-row battery.
+- HumanEval remains host-guarded by default. The guard is practical containment,
+  not a security sandbox; use `--skip-code-exec` for actively malicious endpoints.
+
+## Verification receipts
+
+- `python -m pytest -q`: **210 passed, 164 subtests passed**.
+- All **164/164** official HumanEval canonical solutions passed the guarded executor.
+- Main CLI and the Hermes runner/preflight/status helpers compile.
+- The final wheel contains `sixcat/selection.py`, model policy data, and all runtime
+  datasets. Wheel and sdist publication hashes are attached to the GitHub Release.
+
+---
+
+# Sixcat 0.3.0 Release Notes
+
+**Status:** included in 0.4.0; not tagged separately
+
+## 0.3.0 highlights
+
+- `--limit` is now a **per-category** cap. Standard `--limit 20` targets about
+  120 scored rows, and Knowledge fairly splits its 20 slots across MMLU, ARC,
+  HellaSwag, and WinoGrande instead of expanding to 80 rows.
+- Run identity and final JSON now record `limit_scope: per_category`, preventing
+  old per-dataset journals from being silently resumed under the new contract.
+- `--policy custom` accepts explicit `--temperature` plus optional `--top-p`,
+  `--top-k`, `--min-p`, `--thinking`, and `--seed` values.
+- `/sixcat-eval` now uses emoji-labelled questions with plain-English summaries
+  for target choice, sampling controls, seed, run size, and HumanEval safety.
+- User-facing language calls reviewed mode **vendor-recommended
+  temperature/settings**; unknown or stealth models recommend Custom sampling
+  instead of presenting a strict fallback as a vendor recommendation.
+
+---
+
+# Sixcat 0.2.0 Release Notes
+
+**Release date:** 2026-08-21
+**Previous release:** 0.1.0
+**Status:** final release
+
+Sixcat 0.2.0 turns the original fixed, no-thinking smoke test into a policy-aware,
+self-auditing local LLM battery. Runs now record the exact sampling policy,
+measured token budgets, parser confidence, model-server identity, speed receipts,
+and the full evidence needed to re-derive each score.
+
+## Highlights
+
+- Correct the score contract first: all 23 shipped IFEval constraints are explicit,
+  empty/unknown constraints fail closed, and ARC labels map to presented choices.
+- Keep HumanEval enabled without container overhead while blocking forged exits,
+  dangerous imports, and candidate-controlled success.
+- Emit scorer/parser `v3`; preserve archived v2 artifacts as readable but enforce a
+  hard resume and comparison boundary across scorer versions.
+- Preserve complete per-item evidence and self-auditing policy, parser, server,
+  timeout, code-execution, token, confidence, and speed receipts.
+- Reject mismatched fingerprints, sample scopes, timeouts, parser versions, and code
+  modes unless a visibly non-comparable descriptive delta is explicitly requested.
+- Run `strict`, reviewed `vendor`, or `both` policies from one CLI.
+- Detect unsupported vendor names and fall back loudly to strict instead of guessing.
+- Ship 29 cited model-family mappings, including current DeepSeek V4 Flash/Pro variants.
+- Verify that the server honors the requested thinking mode before scoring begins.
+- Use measured per-category token budgets and repeatable `--budget CATEGORY=N` overrides.
+- Surface truncations, failed loops, low-confidence parses, and missing parser evidence.
+- Record provider-independent wall TPS plus optional llama.cpp/SGLang prefill and decode TPS.
+- Operate Sixcat conversationally from Hermes through the repo-local `/sixcat-eval` skill.
+
+## Scorer v3 integrity corrections
+
+- All 23 instruction IDs present in the shipped IFEval-100 subset now have explicit
+  checkers. Unknown or malformed constraints and empty responses fail closed instead
+  of receiving a pass.
+- `less than` is strict `<`; bullet counts are exact; paragraph, postscript, section,
+  JSON, two-response, capitalization, keyword, and letter rules follow the official
+  IFEval contract.
+- Kannada, Punjabi, Marathi, and Persian response requirements use deterministic
+  `langdetect` validation. Generic English no longer passes a requested language.
+- ARC gold answers resolve through each row's source `labels` array and are converted
+  to the letter shown to the model. Numeric-label rows therefore score correctly.
+- New runs and journals emit parser `v3`. Archived parser-v2 results remain readable,
+  but parser mismatch is a hard resume/comparison boundary unless a descriptive
+  `--allow-mismatch` comparison is explicitly requested.
+
+## HumanEval host guard
+
+HumanEval remains part of the default six-category battery without Docker or
+container startup overhead. Candidate code runs in a fresh host Python process
+with `-I -S`, a sanitized environment, a temporary working directory, and an
+8-second timeout. Before execution, an AST gate rejects filesystem/process/network
+escapes, dangerous process calls, top-level side effects, and private/dunder
+traversal. The candidate namespace also gets an import allowlist and restricted
+builtins. HumanEval's one official arithmetic-`eval` reference is handled by a
+numeric-only evaluator rather than Python's general evaluator.
+
+The grading harness catches `BaseException` around both candidate loading and the
+official tests. After the checker returns, it emits a randomized harness-owned
+success receipt; the parent requires both that receipt and exit code 0. Neither
+`SystemExit(0)` nor a low-level `_exit(0)` can therefore forge a passing score.
+All 164 shipped canonical solutions pass through this guarded path. Every result
+records `code_execution: host-guarded`; `--skip-code-exec` records `disabled`,
+omits Code from the mean, and adds `code-exec-disabled`.
+
+This is a practical low-overhead guard, **not a security sandbox**. Users evaluating
+an actively malicious or unknown endpoint should pass `--skip-code-exec`.
+
+## Self-auditing result schema
+
+New results identify themselves as structural schema `sixcat-v2` with scorer/parser
+`v3`. Parser v3 distinguishes the corrected IFEval and ARC grading contract from
+earlier local v2 artifacts. They include:
+
+- model, endpoint, request timeout, and best-effort server properties;
+- full resolved policy, source, fingerprint, probe details, and budgets;
+- complete visible response and separate reasoning content;
+- request parameters, finish reason, prompt/completion tokens, and parse confidence;
+- deterministic grader provenance for IFEval, HumanEval, and structured tool calls;
+- per-category token percentiles, truncation counts, loop failures, confidence counts,
+  and speed statistics;
+- labelled `overall[strict]` or `overall[vendor]` instead of a bare number;
+- all item rows in the final JSON, not a lossy projection.
+
+Result files are larger by design: a score is now accompanied by the evidence
+needed to audit it.
+
+## Comparison and reporting
+
+`--policy both` runs strict then vendor with independent resources, journals, and
+result files, followed by a vendor-minus-strict table.
+
+Compare existing artifacts with:
+
+```bash
+python -m sixcat compare A.json B.json
+```
+
+A policy fingerprint mismatch is a hard error. Different parser/scorer versions,
+limits, per-category sample counts, code-execution modes, or any timed-out run are
+also hard run-scope mismatches.
+`--allow-mismatch` permits only a loudly labelled descriptive delta. Parser
+mismatch, policy-label mismatch, model mismatch, truncation, missing confidence,
+and low-confidence parsing remain visible.
+
+Unambiguous 0.1.0 result shapes can still be loaded read-only. They are labelled as
+legacy v1 with an assumed strict policy and a distinct fingerprint; the source file
+is never rewritten or presented as comparable to current parser-v3 strict.
+
+## Policy-aware evaluation
+
+### Three run modes
+
+```bash
+# Deterministic no-thinking baseline
+python -m sixcat --model MODEL --policy strict
+
+# Reviewed model-card settings
+python -m sixcat --model MODEL --policy vendor
+
+# Run strict then vendor with separate artifacts and a combined delta
+python -m sixcat --model MODEL --policy both
+```
+
+`strict` remains the CLI default. It uses temperature 0 with thinking disabled.
+`vendor` resolves the first verified model-name pattern in
+`sixcat/model-policies.json`, defaults to seed 1, and carries its source citation
+into every result. An unknown or unverified model emits a warning and resolves
+to strict; it does not receive a guessed vendor recipe.
+
+Specific patterns are ordered before generic families, and broad rows carry
+validated `exclude_patterns` plus positive `required_patterns` where a base model
+ID otherwise looks like chat. For example, `DeepSeek-V4-Flash-0731` and
+`Qwen3.5` cannot be swallowed by generic rows, while unreviewed Base, Coder,
+Embedding, Reranker, VL/Vision, Distill, and Speciale siblings fall back to strict.
+
+### Immutable policy receipts
+
+Every resolved policy includes:
+
+- temperature, top-p, top-k, min-p, and thinking state;
+- category token budgets;
+- additional sampling fields such as seed and repetition/presence penalties;
+- a cited source and reviewed date;
+- a canonical 12-character SHA-256 policy fingerprint.
+
+Policy values are defensively copied and frozen. Extra fields cannot override
+protected request fields such as model, messages, tools, temperature, or thinking.
+
+### Pre-run thinking probe
+
+Before the first scored item, Sixcat asks the model a small arithmetic probe and
+checks the returned `reasoning_content` or inline `<think>` trace:
+
+- thinking policy + no reasoning evidence: abort;
+- no-thinking policy + any reasoning evidence: abort;
+- matching behavior: record the probe receipt and continue.
+
+This prevents a server that ignores `enable_thinking` from silently producing a
+score under the wrong policy.
+
+## Measured token budgets
+
+The old short limits silently converted `finish_reason=length` into wrong answers.
+0.2.0 uses measured defaults and records every request's actual `max_tokens`.
+
+| Category | Strict / no-think | Vendor / thinking |
+|---|---:|---:|
+| knowledge | 768 | 1597 |
+| math | 1197 | 2048 |
+| truth | 64 | 1892 |
+| instruct | 1281 | 6767 |
+| code | 1024 | 3072 |
+| tools | 256 | 768 |
+
+Override one or more categories without rewriting the global defaults:
+
+```bash
+python -m sixcat \
+  --model MODEL \
+  --policy vendor \
+  --budget math=2304 \
+  --budget code=4096
+```
+
+Unknown categories, malformed values, and non-positive budgets fail before a run.
+The included `tools/calibrate_vendor_truth.py` utility performs a pinned,
+self-auditing truth calibration and derives both a formula minimum and a
+zero-truncation floor from uncensored completion-token receipts.
+
+## Answer extraction and confidence receipts
+
+The original v1 parsers often chose the last letter or number in a response. The
+format-first answer extraction introduced in parser v2 remains part of scorer v3:
+
+- recognizes explicit answer cues, boxed answers, bold choices, hash markers,
+  affirmations, and lone-line choices before using a low-confidence fallback;
+- strips inline `<think>...</think>` before answer extraction;
+- never parses dedicated `reasoning_content` as the answer;
+- normalizes thousands separators, leading zeros, and any trailing decimal zeros;
+- records `high`, `low`, or `not_applicable` confidence per row.
+
+The saved result partitions every row into high, low, not-applicable, or missing
+confidence. Missing evidence and more than 20% low-confidence applicable parses
+become visible overall flags. `tools/adjudicate_phase2.py` can replay the archived
+v1 and v2 answer parsers over preserved raw completions and list every changed verdict.
+
+## Reviewed vendor catalog
+
+The catalog is a reviewed lookup, not automatic vendor-name guessing. One family
+row can cover multiple sizes or quantized aliases through explicit patterns.
+Every row has `verified: true`, an HTTPS source, and a reviewed date.
+
+| Family | Temperature | top_p | top_k | min_p | Thinking | Source |
+|---|---:|---:|---:|---:|:---:|---|
+| `qwen3.8` | 1.0 | 0.95 | 20 | 0.0 | on | [official](https://huggingface.co/Qwen/Qwen3.8-27B) |
+| `qwen3.6` | 1.0 | 0.95 | 20 | 0.0 | on | [official](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
+| `qwen3.5` | 1.0 | 0.95 | 20 | 0.0 | on | [official](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) |
+| `qwen3-next-thinking` | 0.6 | 0.95 | 20 | 0.0 | on | [official](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking) |
+| `qwen3-next-instruct` | 0.7 | 0.8 | 20 | 0.0 | off | [official](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) |
+| `qwen3` | 0.6 | 0.95 | 20 | 0.0 | on | [official](https://huggingface.co/Qwen/Qwen3-32B) |
+| `qwen2.5` | 0.7 | 0.8 | 20 | n/a | off | [official](https://huggingface.co/Qwen/Qwen2.5-32B-Instruct/blob/main/generation_config.json) |
+| `ornith-1.5-35b-a3b` | 0.6 | 0.95 | 20 | n/a | on | [official](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B) |
+| `llama-3` | 0.6 | 0.9 | n/a | n/a | off | [official](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/blob/main/generation_config.json) |
+| `deepseek-v4-flash-0731` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) |
+| `deepseek-v4-flash-vision` | 1.0 | 0.95 | n/a | n/a | on | [official](https://api-docs.deepseek.com/updates/#date-2026-08-21) |
+| `deepseek-v4-flash-dspark` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark) |
+| `deepseek-v4-flash` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) |
+| `deepseek-v4-pro-0813` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813) |
+| `deepseek-v4-pro-dspark` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-DSpark) |
+| `deepseek-v4-pro` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) |
+| `deepseek-v4` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) |
+| `deepseek-v3.2` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-V3.2) |
+| `deepseek-r1` | 0.6 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/deepseek-ai/DeepSeek-R1) |
+| `glm-5.x` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/zai-org/GLM-5.2) |
+| `glm-4.7` | 1.0 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/zai-org/GLM-4.7) |
+| `glm-4.6` | 1.0 | 0.95 | 40 | n/a | on | [official](https://huggingface.co/zai-org/GLM-4.6) |
+| `kimi-k2-thinking` | 1.0 | n/a | n/a | n/a | on | [official](https://huggingface.co/moonshotai/Kimi-K2-Thinking) |
+| `kimi-k2-instruct` | 0.6 | n/a | n/a | n/a | off | [official](https://huggingface.co/moonshotai/Kimi-K2-Instruct) |
+| `gpt-oss` | 1.0 | 1.0 | n/a | n/a | on | [official](https://github.com/openai/gpt-oss) |
+| `minimax-m2` | 1.0 | 0.95 | 40 | n/a | on | [official](https://huggingface.co/MiniMaxAI/MiniMax-M2.5) |
+| `gemma-4` | 1.0 | 0.95 | 64 | n/a | on | [official](https://ai.google.dev/gemma/docs/core/model_card_4) |
+| `magistral` | 0.7 | 0.95 | n/a | n/a | on | [official](https://huggingface.co/mistralai/Magistral-Small-2506) |
+| `nemotron-3-ultra` | 1.0 | 0.95 | n/a | n/a | on | [official](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard) |
+| `nemotron-3-nano` | 1.0 | 1.0 | n/a | n/a | on | [official](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16) |
+
+### DeepSeek V4 distinctions
+
+DeepSeek's three-month official inventory was reconciled against its Hugging Face
+organization and API changelog:
+
+- `DeepSeek-V4-Flash-0731` (2026-07-31): uses the official agentic point
+  `temperature=1.0, top_p=0.95` because Sixcat includes a tools lane. Its plain
+  generation config remains `top_p=1.0`.
+- `DeepSeek-V4-Pro-0813` (2026-08-13): same reviewed agentic choice.
+- `DeepSeek-V4-Flash-Vision-Exp` (2026-08-21): API-only experimental model;
+  the official changelog supplies `temperature=1.0, top_p=0.95` for code-agent tests.
+- `DeepSeek-V4-Flash-DSpark` and `DeepSeek-V4-Pro-DSpark`: their official cards
+  say these are the same preview checkpoints with speculative modules attached,
+  so they retain the parent `1.0 / 1.0` recipe.
+- `dspark_*`, `dflash_*`, and `eagle3_*` helper repositories are draft modules,
+  not standalone chat LLMs, and are intentionally not catalog families.
+
+## Packaging
+
+- Package version is `0.2.0`.
+- `sixcat/model-policies.json` and all nine runtime JSONL datasets are included as package data.
+- Runtime data now resolves from `sixcat/data/`, so an installed wheel can run without a source checkout.
+- `MANIFEST.in` keeps release notes, calibration tools, and the project-local Hermes skill in the sdist.
+- Build backend floor is `setuptools>=77`; license metadata uses the SPDX string `MIT`.
+- Generated results, build artifacts, caches, and Unsloth compiled caches remain excluded from Git.
+- Python 3.11+ remains the minimum version.
+- `langdetect>=1.0.9,<2` provides deterministic IFEval response-language validation.
+
+## Hermes project skill
+
+The repository now ships `.hermes/skills/sixcat-eval/`, a project-local skill
+compatible with current Hermes Agent project discovery.
+
+```bash
+cd sixcat-eval
+hermes skills trust
+hermes
+
+# Then in the Hermes session:
+/sixcat-eval
+```
+
+The skill:
+
+1. probes common local endpoints without credentials, or one explicitly supplied
+   authenticated `SIXCAT_BASE_URL`;
+2. detects the exact target from `/v1/models` rather than confusing it with the
+   cloud model running Hermes;
+3. previews the cited policy, temperature, top-p/top-k/min-p, thinking, seed,
+   budgets, and policy fingerprint;
+4. asks for Vendor/Both/Strict and Standard/Quick/Full/Custom scope;
+5. starts a tracked background process with fresh receipt paths;
+6. summarizes live JSONL progress, truncations, loops, and confidence warnings;
+7. rechecks model identity after the run and reports only from saved artifacts.
+
+It does not start, stop, or swap model servers. It rejects ambiguous endpoints,
+avoids concurrent runs by default, never silently resumes across server sessions,
+and preserves partial journals when a user cancels.
+
+Bundled helpers:
+
+```bash
+python .hermes/skills/sixcat-eval/scripts/preflight.py --json
+python .hermes/skills/sixcat-eval/scripts/status.py --log RUN.jsonl --result RUN.json --json
+```
+
+Project skills are not auto-trusted after cloning. This is intentional Hermes
+security behavior; trust is stored in the user's Hermes config, not in the repo.
+
+## Speed receipts
+
+Every request records wall time and provider-independent completion TPS:
+
+```text
+wall_tps = completion_tokens / request_wall_seconds
+```
+
+Category output includes mean item TPS and suite TPS. The final suite receipt
+includes total completion tokens, total wall seconds, mean item TPS, and aggregate
+suite TPS.
+
+When present, Sixcat also preserves:
+
+- llama.cpp `timings` as prefill/decode TPS;
+- SGLang `meta_info` TTFT/TPOT-derived prefill/decode TPS.
+
+The client also includes a tested TTFT calculation helper for future streaming
+integration, but synchronous 0.2.0 runs do not claim that split.
+
+## Loop-failure detection
+
+A failed item is tagged as a loop when the same eight-word chunk appears at least
+eight times in its reasoning or visible answer. Passed rows never count as loop
+failures. Category tables and overall flags surface the count without treating a
+long but non-repetitive answer as a loop.
+
+## CLI additions
+
+- `--policy strict|vendor|both`
+- `--policy-file PATH`
+- `--seed N`
+- repeatable `--budget CATEGORY=N`
+- `--request-timeout SECONDS`
+- `--skip-code-exec`
+- `sixcat compare A.json B.json [--allow-mismatch]`
+- `SIXCAT_API_KEY` as the default credential source; when present, preflight requires
+  exactly one explicit `--base-url` or `SIXCAT_BASE_URL` and never broadcasts it during discovery
+
+## Breaking and migration notes
+
+### Python API
+
+`ChatClient` now requires a resolved `Policy` argument. Direct callers must use
+`strict_policy()` or `resolve_policy()` before constructing the client.
+
+### Result JSON
+
+- `overall` changed from a bare number to `{ "policy": NAME, "score": VALUE }`.
+- Current files require policy provenance, budgets, parser `v3`, per-category stats,
+  explicit confidence buckets, and `overall_flags`.
+- Archived parser-v2 files remain read-only compatible, but are non-comparable with v3.
+- CLI JSONL journals begin with `_sixcat_run` identity metadata and score rows remain separate.
+- Final results retain complete item receipts and are therefore larger.
+
+### Operational behavior
+
+- A failed thinking probe aborts before scoring.
+- Unknown vendor models warn and run strict rather than receiving guessed settings.
+- Resume requires an exact journal identity match across model, endpoint, policy fingerprint,
+  parser, budgets, limit, request timeout, and code-execution mode; legacy or mismatched logs fail before model traffic.
+- Comparing different fingerprints or run scopes fails unless `--allow-mismatch` is explicit.
+
+## Verification receipts
+
+Validated on 2026-08-21:
+
+- `python -m pytest -q`: **189 passed, 163 subtests passed**.
+- Main CLI and `sixcat compare` help both exit zero.
+- Both Hermes helper scripts compile.
+- Live preflight detected the single model on the active local endpoint and resolved
+  its reviewed vendor source, exact settings, budgets, seed, and fingerprint.
+- The status helper parsed a real JSONL journal, including truncation and confidence warnings,
+  ignores only an unterminated active tail, and surfaces corrupt completed lines.
+- `uvx --from build pyproject-build` built both
+  `sixcat_eval-0.2.0.tar.gz` and `sixcat_eval-0.2.0-py3-none-any.whl` successfully.
+- The isolated wheel matched current package sources byte-for-byte, carried all nine
+  datasets plus the `langdetect` dependency metadata, passed all 164 canonical
+  HumanEval solutions, and blocked low-level exit and dangerous-import probes.
+- Its IFEval-100 probe found all 23 shipped IDs implemented, zero unsupported or
+  empty-response passes, and zero generic-English passes for the four requested
+  languages. ARC's nonstandard-label rows mapped to `C`, `B`, and `B` as presented.
+- The extracted sdist matched all intended source/docs/tests/skill files byte-for-byte
+  and passed the complete suite: **189 passed, 163 subtests passed**.
+
+Repeat before publishing:
+
+```bash
+python -m pytest -q
+uvx --from build pyproject-build
+python -m sixcat --help
+python -m sixcat compare --help
+```
+
+The built wheel must contain `sixcat/model-policies.json`. The project-local
+Hermes skill is exercised separately through its preflight/status helpers because
+it is a repository workflow, not Python wheel package data.
+
+## Not in this release
+
+- No automatic scraping of arbitrary model cards.
+- No guessed policy for an unknown family.
+- No automatic server launch, model swap, or process kill.
+- No fabricated prefill/decode split.
+- No claim that different policy fingerprints are directly comparable.
+- No publication, tag, commit, or push until explicitly authorized.

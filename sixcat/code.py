@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .generation import complete_for_item
+
 import ast
 import os
 import re
@@ -10,6 +12,9 @@ import tempfile
 from pathlib import Path
 
 from .dataio import read_jsonl
+from .receipts import completion_row
+from .runtime import effective_timeout, DeadlineExceeded
+from .score import _strip_reasoning
 from .selection import CODE_CHALLENGE_IDS, select_by_ids
 
 
@@ -128,25 +133,27 @@ def _candidate_is_guarded(source: str) -> bool:
     return guard.safe
 
 
+def assemble_candidate(prompt: str, completion: str, entry: str) -> str:
+    """Keep prompt helpers; normalize fenced/body-only/full-function completions."""
+    match = re.search(r"```(?:python)?\s*([\s\S]*?)```", completion)
+    body = match.group(1) if match else completion
+    candidate = prompt + body
+    try:
+        ast.parse(candidate)
+    except SyntaxError:
+        repeated = re.search(rf"(?m)^def\s+{re.escape(entry)}\s*\(", body)
+        if repeated:
+            # Prefer the entire completion so imports/helpers are not discarded.
+            try:
+                ast.parse(body)
+                return body
+            except SyntaxError:
+                return body[repeated.start():]
+    return candidate
+
+
 def _run_humaneval(prompt: str, completion: str, test: str, entry: str, timeout: float = 8.0) -> bool:
-    # strip markdown fences
-    body = completion
-    m = re.search(r"```(?:python)?\s*([\s\S]*?)```", completion)
-    if m:
-        body = m.group(1)
-    # Concatenate prompt and completion so prompt-provided helpers (e.g.
-    # HumanEval/32's poly()) survive a completion that restates the entry
-    # def: the restated definition simply overrides the stub, and nested
-    # helpers in an ordinary completion are untouched. If concatenation does
-    # not parse (a bodyless stub followed by a restated def) fall back to the
-    # historical truncation: drop everything before the restated entry def.
-    candidate_source = prompt + body
-    if not _candidate_is_guarded(candidate_source):
-        repeated_entry = re.search(rf"(?m)^def\s+{re.escape(entry)}\s*\(", body)
-        if repeated_entry and _candidate_is_guarded(body[repeated_entry.start() :]):
-            candidate_source = body[repeated_entry.start() :]
-        else:
-            return False
+    candidate_source = assemble_candidate(prompt, completion, entry)
     if not _candidate_is_guarded(candidate_source):
         return False
     with tempfile.TemporaryDirectory() as td:
@@ -161,6 +168,22 @@ def _run_humaneval(prompt: str, completion: str, test: str, entry: str, timeout:
             "import builtins\n"
             "import runpy\n"
             "import traceback\n"
+            "import sys\n"
+            "try:\n"
+            "    import resource\n"
+            "    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))\n"
+            "    resource.setrlimit(resource.RLIMIT_CPU, (9, 10))\n"
+            "    resource.setrlimit(resource.RLIMIT_FSIZE, (1024**2, 1024**2))\n"
+            "except (ImportError, OSError, ValueError):\n"
+            "    pass\n"
+            "class BoundedOutput:\n"
+            "    def __init__(self, stream): self.stream, self.size = stream, 0\n"
+            "    def write(self, text):\n"
+            "        self.size += len(text.encode('utf-8', errors='replace'))\n"
+            "        if self.size > 65536: raise RuntimeError('candidate output limit exceeded')\n"
+            "        return self.stream.write(text)\n"
+            "    def flush(self): return self.stream.flush()\n"
+            "sys.stdout = BoundedOutput(sys.stdout)\n"
             f"candidate_path = {str(candidate_path)!r}\n"
             f"tests_path = {str(tests_path)!r}\n"
             f"entry_point = {entry!r}\n"
@@ -236,16 +259,19 @@ def _run_humaneval(prompt: str, completion: str, test: str, entry: str, timeout:
             if key.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "HOME"}
         }
         child_env.update({"PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0"})
+        allowed_timeout = effective_timeout(timeout)
         try:
             r = subprocess.run(
                 [sys.executable, "-I", "-S", str(harness_path)],
                 capture_output=True,
                 cwd=td,
                 env=child_env,
-                timeout=timeout,
+                timeout=allowed_timeout,
                 text=True,
             )
         except subprocess.TimeoutExpired:
+            if allowed_timeout < timeout:
+                raise DeadlineExceeded("benchmark deadline interrupted code validation")
             return False
         stdout_lines = r.stdout.splitlines()
         return r.returncode == 0 and bool(stdout_lines) and stdout_lines[-1] == success_token
@@ -284,13 +310,16 @@ def run_code(
     def work(item):
         key = str(item.get("task_id") or "unknown")
         prompt = item["prompt"]
-        out = client.complete(
+        out = complete_for_item(
+            client,
             "Complete the following Python function. Output only code.\n\n" + prompt,
             max_tokens=mt,
         )
+        out = dict(out)
+        out["text"] = _strip_reasoning(out["text"] or "")
         ok = _run_humaneval(prompt, out["text"] or "", item["test"], item["entry_point"])
         usage = out.get("usage") or {}
-        return {
+        return completion_row(out, **{
             "ok": ok,
             "pred": (out["text"] or "")[:200],
             "raw_text": out["text"] or "",
@@ -308,7 +337,7 @@ def run_code(
             "ctok": usage.get("completion_tokens"),
             "ptok": usage.get("prompt_tokens"),
             "request_params": out.get("request_params"),
-        }
+        })
 
     run_pending(session, "code", pending, work, rows)
     return rows

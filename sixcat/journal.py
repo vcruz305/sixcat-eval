@@ -4,17 +4,27 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import uuid
+import warnings
+from urllib.parse import urlsplit
+from .storage import JournalLock
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
 
 class TimeBudget:
     def __init__(self, seconds: float | None):
+        if seconds is not None and (not math.isfinite(seconds) or seconds < 0):
+            raise ValueError("time budget must be finite and non-negative")
         self.seconds = seconds
         self.start = time.monotonic()
+
+    @property
+    def deadline(self) -> float | None:
+        return None if self.seconds is None else self.start + self.seconds
 
     def expired(self) -> bool:
         if self.seconds is None:
@@ -38,31 +48,40 @@ class RunJournal:
         self._done: dict[tuple[str, str], dict[str, Any]] = {}
         self.identity = self._normalise_identity(identity)
         self._loaded_identity: dict[str, Any] | None = None
+        self._first: dict[tuple[str, str], dict[str, Any]] = {}
+        self._attempts: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self.events: list[dict[str, Any]] = []
+        self.recovered_tail_bytes = 0
+        self._writer_lock = JournalLock(self.path)
 
-        if resume and self.path.exists():
-            self._load()
-            if self.identity is not None:
-                if self._loaded_identity is None and self._done:
-                    raise ValueError(
-                        f"cannot resume {self.path}: existing journal is missing run identity; "
-                        "use --no-resume or a fresh log"
-                    )
-                if self._loaded_identity is not None and self._loaded_identity != self.identity:
-                    changed = self.identity_changes(self._loaded_identity, self.identity)
-                    if changed:
+        try:
+            if resume and self.path.exists():
+                self._load()
+                if self.identity is not None:
+                    if self._loaded_identity is None and self._done:
                         raise ValueError(
-                            f"cannot resume {self.path}: run identity mismatch in {', '.join(changed)}; "
-                            "use --no-resume or a matching log"
+                            f"cannot resume {self.path}: existing journal is missing run identity; "
+                            "use --no-resume or a fresh log"
                         )
-            elif self._loaded_identity is not None:
-                self.identity = copy.deepcopy(self._loaded_identity)
-            self._fh = self.path.open("a", encoding="utf-8")
-            if self.identity is not None and self._loaded_identity is None:
-                self._write_identity_header()
-        else:
-            self._fh = self.path.open("w", encoding="utf-8")
-            if self.identity is not None:
-                self._write_identity_header()
+                    if self._loaded_identity is not None and self._loaded_identity != self.identity:
+                        changed = self.identity_changes(self._loaded_identity, self.identity)
+                        if changed:
+                            raise ValueError(
+                                f"cannot resume {self.path}: run identity mismatch in {', '.join(changed)}; "
+                                "use --no-resume or a matching log"
+                            )
+                elif self._loaded_identity is not None:
+                    self.identity = copy.deepcopy(self._loaded_identity)
+                self._fh = self.path.open("a", encoding="utf-8")
+                if self.identity is not None and self._loaded_identity is None:
+                    self._write_identity_header()
+            else:
+                self._fh = self.path.open("w", encoding="utf-8")
+                if self.identity is not None:
+                    self._write_identity_header()
+        except BaseException:
+            self._writer_lock.close()
+            raise
 
     @staticmethod
     def _normalise_identity(identity: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -79,8 +98,10 @@ class RunJournal:
     def _is_loopback_base_url(value: Any) -> bool:
         if not isinstance(value, str) or not value.strip():
             return False
-        lowered = value.casefold()
-        return "://127.0.0.1" in lowered or "://localhost" in lowered
+        try:
+            return urlsplit(value).hostname in {"127.0.0.1", "localhost", "::1"}
+        except ValueError:
+            return False
 
     @classmethod
     def identity_changes(
@@ -98,6 +119,8 @@ class RunJournal:
                 key == "base_url"
                 and cls._is_loopback_base_url(loaded.get(key))
                 and cls._is_loopback_base_url(incoming.get(key))
+                and loaded.get("verified_upstream")
+                and loaded.get("verified_upstream") == incoming.get("verified_upstream")
             ):
                 continue
             if key == "transport":
@@ -114,31 +137,63 @@ class RunJournal:
         self._fh.flush()
         self._loaded_identity = copy.deepcopy(self.identity)
 
+    def _record(self, rec: dict[str, Any]) -> None:
+        ident = (str(rec["cat"]), str(rec["key"]))
+        saved = copy.deepcopy(rec)
+        self._attempts.setdefault(ident, []).append(saved)
+        if rec.get("scored", True):
+            self._done[ident] = saved
+            self._first.setdefault(ident, saved)
+
     def _load(self) -> None:
-        with self.path.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+        raw = self.path.read_bytes()
+        lines = raw.splitlines(keepends=True)
+        offset = 0
+        for index, raw_line in enumerate(lines):
+            try:
+                line = raw_line.decode("utf-8").strip()
                 if not line:
+                    offset += len(raw_line)
                     continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                if self.HEADER_KEY in rec:
-                    loaded = self._normalise_identity(rec.get(self.HEADER_KEY))
-                    if self._loaded_identity is not None and loaded != self._loaded_identity:
-                        raise ValueError(f"journal {self.path} contains conflicting run identity headers")
-                    self._loaded_identity = loaded
-                    continue
-                if self.RETRY_KEY in rec:
-                    continue
-                cat = rec.get("cat")
-                key = rec.get("key")
-                if cat is None or key is None:
-                    continue
-                self._done[(str(cat), str(key))] = rec
+                rec = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                if index == len(lines) - 1 and not raw_line.endswith(b"\n"):
+                    backup = self.path.with_name(self.path.name + ".torn-" + uuid.uuid4().hex + ".bin")
+                    backup.write_bytes(raw_line)
+                    with self.path.open("r+b") as handle:
+                        handle.truncate(offset)
+                    self.recovered_tail_bytes = len(raw_line)
+                    warnings.warn(f"recovered {len(raw_line)} torn journal bytes; preserved at {backup}", RuntimeWarning)
+                    return
+                raise ValueError(f"corrupt journal record at line {index + 1} in {self.path}") from exc
+            offset += len(raw_line)
+            if not isinstance(rec, dict):
+                raise ValueError(f"journal record {index + 1} must be an object")
+            if self.HEADER_KEY in rec:
+                loaded = self._normalise_identity(rec[self.HEADER_KEY])
+                if self._loaded_identity is not None and loaded != self._loaded_identity:
+                    raise ValueError(f"journal {self.path} contains conflicting run identity headers")
+                self._loaded_identity = loaded
+            elif "cat" in rec and "key" in rec:
+                self._record(rec)
+            else:
+                self.events.append(rec)
+        # Even a complete last JSON value needs a separator before the next append.
+        if raw and not raw.endswith(b"\n"):
+            with self.path.open("ab") as handle:
+                handle.write(b"\n")
+
+    def first_rows_for(self, cat: str) -> list[dict[str, Any]]:
+        return copy.deepcopy([row for (category, _), row in self._first.items() if category == cat])
+
+    def first(self, cat: str, key: str) -> dict[str, Any] | None:
+        return copy.deepcopy(self._first.get((cat, str(key))))
+
+    def attempts_for(self, cat: str, key: str) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._attempts.get((cat, str(key)), []))
+
+    def all_attempts(self) -> list[dict[str, Any]]:
+        return copy.deepcopy([row for attempts in self._attempts.values() for row in attempts])
 
     def done_keys(self) -> set[tuple[str, str]]:
         return set(self._done)
@@ -147,10 +202,10 @@ class RunJournal:
         return {ident for ident, rec in self._done.items() if rec.get("ok") is not True}
 
     def get(self, cat: str, key: str) -> dict[str, Any] | None:
-        return self._done.get((cat, str(key)))
+        return copy.deepcopy(self._done.get((cat, str(key))))
 
     def rows_for(self, cat: str) -> list[dict[str, Any]]:
-        return [v for (c, _), v in self._done.items() if c == cat]
+        return copy.deepcopy([v for (c, _), v in self._done.items() if c == cat])
 
     def append_event(self, rec: dict[str, Any]) -> None:
         payload = dict(rec)
@@ -159,6 +214,7 @@ class RunJournal:
         with self._lock:
             self._fh.write(line)
             self._fh.flush()
+            self.events.append(copy.deepcopy(payload))
 
     def append(self, rec: dict[str, Any]) -> None:
         cat = str(rec["cat"])
@@ -167,17 +223,19 @@ class RunJournal:
         rec["cat"] = cat
         rec["key"] = key
         rec.setdefault("ts", time.time())
-        line = json.dumps(rec, ensure_ascii=False) + "\n"
         with self._lock:
+            rec["attempt"] = len(self._attempts.get((cat, key), [])) + 1
+            line = json.dumps(rec, ensure_ascii=False, allow_nan=False) + "\n"
             self._fh.write(line)
             self._fh.flush()
-            self._done[(cat, key)] = rec
+            self._record(rec)
 
     def close(self) -> None:
         with self._lock:
             if getattr(self, "_fh", None):
                 self._fh.close()
                 self._fh = None
+            self._writer_lock.close()
 
     def __enter__(self) -> "RunJournal":
         return self
@@ -205,6 +263,13 @@ class Session:
         self.retry_mode = retry_mode
         self.concurrency = max(1, int(concurrency))
         self._gate_lock = threading.Lock()
+        self.collecting = False
+        self.pending_tasks = []
+        self.plan_keys: list[tuple[str, str]] = []
+        self.segment_id = uuid.uuid4().hex
+        self.segment_started = time.monotonic()
+        self.segment_attempts: list[dict[str, Any]] = []
+        self.errors: list[dict[str, Any]] = []
         self.retry_keys = journal.failed_keys() if retry_failed else set()
         self.rescored: set[tuple[str, str]] = set()
         if self.retry_keys:
@@ -220,9 +285,11 @@ class Session:
     def begin(self, cat: str, key: str):
         ident = (cat, str(key))
         with self._gate_lock:
+            if ident not in self.plan_keys:
+                self.plan_keys.append(ident)
             cached = self.journal.get(cat, str(key))
             wants_retry = ident in self.retry_keys
-            if self.budget.expired():
+            if self.budget.expired() and not self.collecting:
                 if not self.stopped:
                     print(f"TIMEUP before {cat}/{key}", flush=True)
                 self.stopped = True
@@ -241,8 +308,11 @@ class Session:
         rec["cat"] = cat
         rec["key"] = str(key)
         rec.setdefault("id", key)
+        rec["segment_id"] = self.segment_id
         with self._gate_lock:
             self.journal.append(rec)
+            if not rec.get("generation_reused"):
+                self.segment_attempts.append(copy.deepcopy(rec))
             ident = (cat, str(key))
             if ident in self.retry_keys:
                 self.rescored.add(ident)
@@ -303,32 +373,13 @@ def concurrency_of(session: Session | None) -> int:
 
 
 def run_pending(
-    session: Session | None,
-    cat: str,
-    pending: list[tuple[str, Any]],
-    worker: Callable[[Any], dict[str, Any]],
-    rows: list[dict[str, Any]],
+    session: Session | None, cat: str, pending: list[tuple[str, Any]],
+    worker: Callable[[Any], dict[str, Any]], rows: list[dict[str, Any]],
 ) -> str:
-    """Run already-gated (key, payload) pairs. Worker must not touch the journal.
-
-    Returns 'stop' if the time budget expires before a serial item starts; parallel
-    in-flight items are always drained. Default concurrency is 1 (serial).
-    """
-    if not pending:
+    """Schedule bounded work, or collect it for the battery's global ranked queue."""
+    from .scheduler import Task, execute_tasks
+    tasks = [Task(cat, key, payload, worker, rows) for key, payload in pending]
+    if session is not None and session.collecting:
+        session.pending_tasks.extend(tasks)
         return "run"
-    workers = concurrency_of(session)
-    if workers == 1:
-        for key, payload in pending:
-            if session is not None and session.budget.expired():
-                if not session.stopped:
-                    print(f"TIMEUP before {cat}/{key}", flush=True)
-                session.stopped = True
-                return "stop"
-            rows.append(emit(session, cat, key, worker(payload)))
-        return "run"
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        future_map = {pool.submit(worker, payload): key for key, payload in pending}
-        for fut in as_completed(future_map):
-            key = future_map[fut]
-            rows.append(emit(session, cat, key, fut.result()))
-    return "run"
+    return execute_tasks(tasks, session)

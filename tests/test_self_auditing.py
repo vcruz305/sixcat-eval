@@ -57,7 +57,7 @@ class TestResultRowSerialization(unittest.TestCase):
                 return json.dumps(response_body).encode("utf-8")
 
         secret_sentinel = "SUPER" + "-SECRET"
-        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        with patch("sixcat.client.open_request", return_value=FakeResponse()):
             out = ChatClient(
                 "http://fixture/v1",
                 "fixture-model",

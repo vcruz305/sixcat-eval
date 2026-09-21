@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from .generation import complete_for_item
+
 import copy
+import time
+from .receipts import completion_row
+from .runtime import deadline_scope
+from .scheduler import balanced_order, execute_tasks, segment_receipt
+from .manifest import ATTEMPT_POLICY, SCHEDULE, benchmark_manifest, expected_counts
 from typing import Any
 
 from .client import ChatClient, fetch_server_props
@@ -18,6 +25,9 @@ from .score import (
     category_stats,
     extract_gsm_number_conf,
     extract_mc_letter_conf,
+    parse_mc_answer,
+    parse_gsm_answer,
+    _strip_reasoning,
     is_loop_failure,
     overall_score,
     suite_speed,
@@ -48,11 +58,8 @@ LETTERS = "ABCDEFGHIJKLMNOP"
 
 
 def expected_scored_items(limit: int | None, *, skip_code_exec: bool = False) -> int:
-    """How many rows this scope should produce if it finishes."""
-    if limit is None:
-        return FULL_SCORED_ITEMS - (164 if skip_code_exec else 0)
-    categories = 5 if skip_code_exec else 6
-    return categories * limit
+    """Derive scope from actual selected corpora; Tools caps at 20, not at limit."""
+    return sum(expected_counts(limit, skip_code_exec).values())
 
 
 def continuation_offer(result: dict[str, Any]) -> dict[str, Any]:
@@ -62,7 +69,8 @@ def continuation_offer(result: dict[str, Any]) -> dict[str, Any]:
     scored = sum(int(count or 0) for count in (result.get("n") or {}).values())
     remaining = max(expected - scored, 0)
     failed_keys: list[str] = []
-    for category, rows in (result.get("items") or {}).items():
+    diagnostic_items = (result.get("diagnostics") or {}).get("latest_items")
+    for category, rows in (diagnostic_items or result.get("items") or {}).items():
         if not isinstance(rows, list):
             continue
         for row in rows:
@@ -89,6 +97,15 @@ def retry_plan_from_result(result: dict[str, Any], *, retry: str, result_path: s
     offer = continuation_offer(result)
     policy = result.get("policy") if isinstance(result.get("policy"), dict) else {}
     argv: list[str] = ["--policy", str(policy.get("name") or "custom")]
+    if result.get("model"):
+        argv.extend(["--model", str(result["model"])])
+    if result.get("base_url"):
+        argv.extend(["--base-url", str(result["base_url"])])
+    for category, value in (result.get("budgets") or {}).items():
+        argv.extend(["--budget", f"{category}={value}"])
+    if result.get("artifact_id"):
+        argv.extend(["--artifact-id", str(result["artifact_id"])])
+    argv.extend(["--concurrency", str(result.get("concurrency", 1))])
     if policy.get("name") == "custom":
         if policy.get("temperature") is None:
             raise ValueError("custom result is missing temperature")
@@ -177,54 +194,7 @@ def _emit(session: Session | None, cat: str, key: str, row: dict[str, Any]) -> d
 
 
 def _row(out: dict[str, Any], **extra: Any) -> dict[str, Any]:
-    """Phase 1 (sixcat v2.1): every emitted row carries finish/ctok/request_params so
-    truncation and budget questions are answerable from the JSONL after the fact.
-    """
-    usage = out.get("usage") or {}
-    row: dict[str, Any] = dict(extra)
-    row["finish"] = out.get("finish")
-    row["ctok"] = usage.get("completion_tokens")
-    row["ptok"] = usage.get("prompt_tokens")
-    rtok = usage.get("reasoning_tokens")
-    if rtok is None:
-        rtok = out.get("reasoning_tokens")
-    row["rtok"] = rtok
-    row["atok"] = answer_tokens(row.get("ctok"), rtok)
-    row["request_params"] = out.get("request_params")
-    if "parse_confidence" in out:
-        row["parse_confidence"] = out["parse_confidence"]
-    if "raw_text" in out:
-        row["raw_text"] = out["raw_text"]
-    elif "text" in out:
-        row["raw_text"] = out["text"] or ""
-    if "reasoning_content" in out:
-        row["reasoning_content"] = out["reasoning_content"]
-    for key in (
-        "prefill_tps",
-        "decode_tps",
-        "prefill_ms",
-        "decode_ms",
-        "prefill_n",
-        "decode_n",
-        "speed_source",
-        "wall_s",
-        "wall_tps",
-    ):
-        if key in out:
-            row[key] = out[key]
-    if row.get("wall_tps") is None:
-        ctok = row.get("ctok")
-        wall = row.get("wall_s")
-        if (
-            isinstance(ctok, (int, float))
-            and not isinstance(ctok, bool)
-            and isinstance(wall, (int, float))
-            and not isinstance(wall, bool)
-            and wall > 0
-        ):
-            row["wall_tps"] = float(ctok) / float(wall)
-    row["loop"] = is_loop_failure(row)
-    return row
+    return completion_row(out, **extra)
 
 
 def _ask_mc(client: ChatClient, stem: str, choices: list[str], max_tokens: int = 32) -> dict[str, Any]:
@@ -233,10 +203,12 @@ def _ask_mc(client: ChatClient, stem: str, choices: list[str], max_tokens: int =
         lines.append(f"{choice_letter(i)}. {c}")
     lines.append("")
     lines.append("Reply with only the letter of the correct option.")
-    out = client.complete("\n".join(lines), max_tokens=max_tokens)
-    letter, conf = extract_mc_letter_conf(out["text"] or "")
-    out["pred"] = letter or ""
-    out["parse_confidence"] = conf
+    out = complete_for_item(client, "\n".join(lines), max_tokens=max_tokens)
+    out["prompt"] = "\n".join(lines)
+    parsed = parse_mc_answer(out["text"] or "", valid_letters=LETTERS[:len(choices)])
+    out["pred"] = parsed["value"] or ""
+    out["parse_confidence"] = parsed["confidence"]
+    out["parse_status"] = parsed["status"]
     # The complete visible response is the parser receipt. Truncating it here makes a
     # saved verdict impossible to re-derive even when the server completed normally.
     out["raw_text"] = out["text"] or ""
@@ -323,12 +295,13 @@ def run_math(
         pending.append((key, item))
 
     def work(item: Any) -> dict[str, Any]:
-        out = client.complete(
-            item["question"] + "\n\nEnd with #### <number> and nothing after.",
-            max_tokens=mt,
-        )
-        pred, conf = extract_gsm_number_conf(out["text"] or "")
-        out["parse_confidence"] = conf
+        prompt = item["question"] + "\n\nEnd with #### <number> and nothing after."
+        out = complete_for_item(client, prompt, max_tokens=mt)
+        out["prompt"] = prompt
+        parsed = parse_gsm_answer(out["text"] or "")
+        pred = parsed["value"]
+        out["parse_confidence"] = parsed["confidence"]
+        out["parse_status"] = parsed["status"]
         out["raw_text"] = out["text"] or ""
         gold, _ = extract_gsm_number_conf(item["answer"])
         return _row(out, ok=pred == gold and pred is not None, pred=pred, gold=gold)
@@ -384,8 +357,10 @@ def run_instruct(
         pending.append((key, item))
 
     def work(item: Any) -> dict[str, Any]:
-        out = client.complete(item["prompt"], max_tokens=mt)
-        text = out["text"] or ""
+        out = complete_for_item(client, item["prompt"], max_tokens=mt)
+        text = _strip_reasoning(out["text"] or "")
+        out = dict(out)
+        out["text"] = text
         ok = item_ok(item, text)
         out["parse_confidence"] = "not_applicable"
         return _row(
@@ -453,10 +428,18 @@ def run_battery(
     configured_ctx: int | None = None,
 ) -> dict:
     resolved_budgets = dict(client.policy.budgets)
-    server_props = fetch_server_props(client.base_url, client.api_key)
-    policy_probe_details = probe_policy(client)
-    if policy_probe_details.get("status") != "ok":
-        raise RuntimeError(f"policy probe failed: {policy_probe_details.get('reason', 'unknown failure')}")
+    with deadline_scope(session.budget.deadline if session is not None else None):
+        server_props = getattr(client, "server_props", None)
+        if server_props is None:
+            server_props = fetch_server_props(client.base_url, client.api_key)
+        policy_probe_details = probe_policy(client)
+    probe_failed = policy_probe_details.get("status") != "ok"
+    if probe_failed:
+        if session is None:
+            raise RuntimeError(f"policy probe failed: {policy_probe_details.get('reason', 'unknown failure')}")
+        session.stopped = session.budget.expired()
+        session.errors.append({"phase": "preflight", "status": "deadline" if session.stopped else "error"})
+        print("PREFLIGHT FAILED: no scored requests will be sent", flush=True)
     output_reserve = max(resolved_budgets.values()) if resolved_budgets else 1024
     preflight = assemble_preflight(
         requested_model=client.model,
@@ -469,6 +452,8 @@ def run_battery(
         cache_key=f"{client.base_url}|{client.model}|chat",
         store_cache=True,
     )
+    if session is not None:
+        session.collecting = True
     packs = {
         "knowledge": run_knowledge(client, limit, session, resolved_budgets),
         "math": run_math(client, limit, session, resolved_budgets),
@@ -483,6 +468,31 @@ def run_battery(
         ),
         "tools": run_tools(client, limit, session, resolved_budgets.get("tools")),
     }
+    diagnostics = None
+    segment = None
+    if session is not None:
+        session.collecting = False
+        if not probe_failed:
+            execute_tasks(balanced_order(session.pending_tasks), session)
+        latest = {
+            cat: [row for category, key in session.plan_keys if category == cat
+                  if (row := session.journal.get(cat, key)) is not None]
+            for cat in CATEGORIES
+        }
+        for cat in CATEGORIES:
+            keys = [key for category, key in session.plan_keys if category == cat]
+            first = [session.journal.first(cat, key) for key in keys]
+            packs[cat] = [row for row in first if row is not None]
+        if session.retry_mode in {"failed", "incomplete"} or any(
+            len(session.journal.attempts_for(cat, key)) > 1 for cat, key in session.plan_keys
+        ):
+            latest_scores = {cat: category_score(rows) for cat, rows in latest.items()}
+            diagnostics = {"label": "latest-attempt diagnostic; NOT pass@1",
+                           "attempt_policy": "latest-attempt-diagnostic",
+                           "latest_items": latest, "categories": latest_scores,
+                           "overall": overall_score(latest_scores) if any(v is not None for v in latest_scores.values()) else None}
+        segment = segment_receipt(session, session.segment_attempts)
+        session.journal.append_event({"_sixcat_segment": segment})
     cats = {k: category_score(v) for k, v in packs.items()}
     stats = {k: category_stats(v) for k, v in packs.items()}
     timed_out = bool(session and session.stopped)
@@ -491,8 +501,20 @@ def run_battery(
     if skip_code_exec:
         overall_flags.append("code-exec-disabled")
     overall_value = overall_score(cats) if any(v is not None for v in cats.values()) else None
+    manifest = benchmark_manifest(limit, skip_code_exec)
     result = {
         "model": client.model,
+        "artifact_id": getattr(client, "artifact_id", None),
+        "server_identity": getattr(client, "server_identity", None),
+        "attempt_policy": ATTEMPT_POLICY,
+        "schedule": SCHEDULE if session is not None else "category-order",
+        "concurrency": session.concurrency if session is not None else 1,
+        "benchmark_manifest": manifest,
+        "benchmark_fingerprint": manifest["fingerprint"],
+        "expected_n": expected_counts(limit, skip_code_exec),
+        "diagnostics": diagnostics,
+        "execution": segment,
+        "errors": copy.deepcopy(session.errors) if session is not None else [],
         "base_url": client.base_url,
         "request_timeout_seconds": getattr(client, "timeout", None),
         "server_props": server_props,
@@ -521,6 +543,12 @@ def run_battery(
         "items": packs,
         "speed": suite_speed(packs),
     }
+    result["complete"] = result["n"] == result["expected_n"] and not timed_out and not probe_failed
+    result["speed"]["coverage"] = f"{result['speed']['items']}/{sum(result['n'].values())}"
+    if not result["complete"]:
+        result["overall_flags"].append("incomplete-scope")
+    if session is not None:
+        result["execution_segments"] = [event["_sixcat_segment"] for event in session.journal.events if "_sixcat_segment" in event]
     offer = continuation_offer(result)
     if session is not None and (session.retry_mode or session.retry_keys or session.rescored):
         offer.update(session.continuation_receipt())
@@ -544,6 +572,8 @@ def render_table(result: dict) -> str:
         f"policy: {policy_name} ({result.get('policy_fingerprint')})",
         f"source: {result.get('policy_source')}",
         f"code execution: {result.get('code_execution', 'unrecorded')}",
+        f"attempts: {result.get('attempt_policy', 'legacy/unrecorded')}",
+        f"concurrency: {result.get('concurrency', 1)}; schedule: {result.get('schedule', 'legacy/unrecorded')}",
     ]
     preflight = result.get("preflight")
     if isinstance(preflight, dict):
@@ -658,4 +688,15 @@ def render_table(result: dict) -> str:
             + ", ".join(missing_categories)
             + " — affected rows are not self-auditing"
         )
+    execution = result.get("execution") or {}
+    if execution:
+        throughput = execution.get("throughput_tps")
+        lines.append(f"session: {execution['elapsed_s']:.2f}s; responses={execution['responses']}; "
+                     f"aggregate_tps={throughput:.2f}" if throughput is not None else "session throughput: n/a")
+        lines.append(f"timing coverage: {execution.get('throughput_coverage')}; concurrency={execution['concurrency']}")
+    if result.get("complete") is False:
+        lines.append("PARTIAL / PROVISIONAL: scope unfinished; do not treat this as a complete SixCat score.")
+    diagnostics = result.get("diagnostics")
+    if diagnostics:
+        lines.append(f"diagnostic latest-attempt overall: {diagnostics.get('overall')} (NOT pass@1; headline unchanged)")
     return "\n".join(lines)

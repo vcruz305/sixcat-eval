@@ -10,3 +10,10 @@ results/
 build/
 dist/
 unsloth_compiled_cache/
+
+.coverage
+coverage.xml
+junit.xml
+.ruff_cache/
+wheelhouse/
+*.jsonl.lock

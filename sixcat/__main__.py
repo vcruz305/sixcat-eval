@@ -3,11 +3,16 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
+from .storage import atomic_write_json
+from .manifest import ATTEMPT_POLICY, SCHEDULE, benchmark_manifest, observed_server_identity
+from .runtime import deadline_scope
 import os
+import re
 import sys
 from pathlib import Path
 
-from .client import ChatClient
+from .client import ChatClient, fetch_server_props
 from .journal import RunJournal, Session, TimeBudget
 from .policy import custom_policy, override_thinking, resolve_policy, vendor_family_catalog
 from .report import (
@@ -53,9 +58,16 @@ def _journal_identity(
     request_timeout: float,
     skip_code_exec: bool,
     transport: str = "openai",
+    server_identity: dict | None = None,
+    artifact_id: str | None = None,
 ) -> dict:
     identity = {
         "result_schema": RESULT_SCHEMA,
+        "attempt_policy": ATTEMPT_POLICY,
+        "schedule": SCHEDULE,
+        "benchmark_fingerprint": benchmark_manifest(limit, skip_code_exec)["fingerprint"],
+        "server_identity": server_identity,
+        "artifact_id": artifact_id,
         "parser": PARSER_VERSION,
         "model": model,
         "base_url": base_url.rstrip("/"),
@@ -69,6 +81,8 @@ def _journal_identity(
         "request_timeout_seconds": float(request_timeout),
         "code_execution": "disabled" if skip_code_exec else "host-guarded",
     }
+    if server_identity and server_identity.get("verified_upstream"):
+        identity["verified_upstream"] = server_identity["verified_upstream"]
     if (transport or "openai") != "openai":
         identity["transport"] = transport
     return identity
@@ -94,7 +108,7 @@ def _slim_result(result: dict, log_path: Path) -> dict:
 
 def _write_result(result: dict, out_path: Path, log_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(_slim_result(result, log_path), indent=2), encoding="utf-8")
+    atomic_write_json(out_path, _slim_result(result, log_path))
     print(f"\nwrote {out_path}")
 
 
@@ -102,6 +116,7 @@ def _run_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="sixcat", description="Six community categories + one overall score.")
     p.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
     p.add_argument("--model", required=True)
+    p.add_argument("--artifact-id", default=None, help="Operator-provided model/quant revision or SHA256; bound into resume identity.")
     p.add_argument(
         "--api-key",
         default=os.environ.get("SIXCAT_API_KEY", "none"),
@@ -150,7 +165,7 @@ def _run_main(argv: list[str]) -> int:
         "--max-minutes",
         type=float,
         default=30.0,
-        help="Stop starting new items after this many minutes. Default 30. 0 = no cap.",
+        help="Total invocation deadline including preflight and in-flight requests. Default 30. 0 = no cap.",
     )
     p.add_argument(
         "--request-timeout",
@@ -212,8 +227,12 @@ def _run_main(argv: list[str]) -> int:
         "e.g. --budget math=2048 --budget code=3072. Unknown category names are rejected.",
     )
     args = p.parse_args(argv)
-    if args.request_timeout <= 0:
-        p.error("--request-timeout must be positive")
+    if not math.isfinite(args.request_timeout) or args.request_timeout <= 0:
+        p.error("--request-timeout must be finite and positive")
+    if not math.isfinite(args.max_minutes) or args.max_minutes < 0:
+        p.error("--max-minutes must be finite and non-negative")
+    if args.limit <= 0:
+        p.error("--limit must be positive (use --full for the entire corpus)")
     if args.ctx is not None and args.ctx <= 0:
         p.error("--ctx must be a positive token count")
     if args.concurrency < 1:
@@ -239,12 +258,13 @@ def _run_main(argv: list[str]) -> int:
         p.error("--policy-family requires --policy vendor or --policy both")
 
     limit = None if args.full else args.limit
+    model_slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.model).strip(".") or "model"
     requested_log = args.log
     if requested_log is None:
         if args.out:
             requested_log = args.out.with_suffix(".jsonl")
         else:
-            requested_log = Path("results") / f"{args.model}.jsonl"
+            requested_log = Path("results") / f"{model_slug}.jsonl"
 
     if args.retry and args.no_resume:
         p.error("--retry merges into an existing journal; do not pass --no-resume")
@@ -252,7 +272,7 @@ def _run_main(argv: list[str]) -> int:
     seconds = None if args.max_minutes == 0 else args.max_minutes * 60.0
     policy_names = ("strict", "vendor") if args.policy == "both" else (args.policy,)
     if args.policy == "both":
-        requested_out = args.out or (Path("results") / f"{args.model}.json")
+        requested_out = args.out or (Path("results") / f"{model_slug}.json")
         run_paths = {
             name: (
                 _label_path(requested_out, name, default_suffix=".json"),
@@ -263,7 +283,13 @@ def _run_main(argv: list[str]) -> int:
     else:
         run_paths = {args.policy: (args.out, requested_log)}
 
+    for out_path, log_path in run_paths.values():
+        if out_path is not None and out_path.resolve() == log_path.resolve():
+            p.error("--out and --log must name different files")
+        if args.retry and not Path(log_path).exists():
+            p.error(f"--retry requires an existing journal at {log_path}")
     completed_results: dict[str, dict] = {}
+    invocation_budget = TimeBudget(seconds=seconds)
     for policy_name in policy_names:
         out_path, log_path = run_paths[policy_name]
         if args.policy == "both":
@@ -292,6 +318,16 @@ def _run_main(argv: list[str]) -> int:
                 policy = override_thinking(policy, args.thinking == "on")
         except ValueError as exc:
             p.error(str(exc))
+        client = ChatClient(
+            args.base_url, args.model, policy, api_key=args.api_key,
+            timeout=args.request_timeout, transport=args.transport,
+            stdio_in=sys.stdin if args.transport == "stdio" else None,
+            stdio_out=protocol_out if args.transport == "stdio" else None,
+        )
+        with deadline_scope(invocation_budget.deadline):
+            client.server_props = fetch_server_props(args.base_url, args.api_key) if args.transport == "openai" else {"source": "stdio"}
+        client.server_identity = observed_server_identity(client.server_props, args.model)
+        client.artifact_id = args.artifact_id
         identity = _journal_identity(
             model=args.model,
             base_url=args.base_url,
@@ -300,6 +336,8 @@ def _run_main(argv: list[str]) -> int:
             request_timeout=args.request_timeout,
             skip_code_exec=args.skip_code_exec,
             transport=args.transport,
+            server_identity=client.server_identity,
+            artifact_id=args.artifact_id,
         )
         if args.retry and not Path(log_path).exists():
             p.error(f"--retry requires an existing journal at {log_path}")
@@ -307,7 +345,7 @@ def _run_main(argv: list[str]) -> int:
             journal = RunJournal(log_path, resume=not args.no_resume, identity=identity)
         except ValueError as exc:
             p.error(str(exc))
-        budget = TimeBudget(seconds=seconds)
+        budget = invocation_budget
         session = Session(
             journal,
             budget,
@@ -321,16 +359,6 @@ def _run_main(argv: list[str]) -> int:
             flush=True,
         )
         try:
-            client = ChatClient(
-                args.base_url,
-                args.model,
-                policy,
-                api_key=args.api_key,
-                timeout=args.request_timeout,
-                transport=args.transport,
-                stdio_in=sys.stdin if args.transport == "stdio" else None,
-                stdio_out=protocol_out if args.transport == "stdio" else None,
-            )
             result = run_battery(
                 client,
                 limit=limit,
@@ -359,7 +387,8 @@ def _run_main(argv: list[str]) -> int:
             )
             return 2
         print(combined)
-    return 0
+    return 2 if any(result.get("policy_probe") not in (None, "ok") or result.get("errors")
+                    for result in completed_results.values()) else 0
 
 
 def _compare_main(argv: list[str]) -> int:
@@ -374,7 +403,14 @@ def _compare_main(argv: list[str]) -> int:
         action="store_true",
         help="Display descriptive deltas despite policy or run-scope mismatch (not comparable).",
     )
+    parser.add_argument("--bootstrap-samples", type=int, default=2000)
+    parser.add_argument("--bootstrap-seed", type=int, default=0)
+    parser.add_argument("--out", type=Path, help="Optional machine-readable paired comparison (not a benchmark result).")
     args = parser.parse_args(argv)
+    if not 100 <= args.bootstrap_samples <= 100000:
+        parser.error("--bootstrap-samples must be between 100 and 100000")
+    if args.out and args.out.resolve() in {args.a.resolve(), args.b.resolve()}:
+        parser.error("comparison output must not overwrite either input")
     try:
         a = load_result(args.a)
         b = load_result(args.b)
@@ -385,6 +421,19 @@ def _compare_main(argv: list[str]) -> int:
     for notice in notices:
         print(notice, file=sys.stderr)
     print(table)
+    analysis = None
+    if a.get("items") and b.get("items"):
+        from .analysis import paired_comparison, render_paired
+        try:
+            # Re-run the strict gate even when a descriptive override was requested.
+            compare_results(a, b, allow_mismatch=False)
+            analysis = paired_comparison(a, b, samples=args.bootstrap_samples, seed=args.bootstrap_seed)
+            print(render_paired(analysis))
+        except (ValueError, PolicyMismatchError, RunScopeMismatchError) as exc:
+            print(f"Paired inference omitted: {exc}", file=sys.stderr)
+    if args.out:
+        atomic_write_json(args.out, {"kind": "sixcat-comparison", "a": str(args.a), "b": str(args.b),
+                                    "notices": notices, "paired": analysis})
     return 0
 
 
@@ -490,8 +539,14 @@ def _preflight_main(argv: list[str]) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _dispatch(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"rescore", "export-evalplus"}:
+        from .offline import main as offline_main
+        return offline_main(args[1:], export=args[0] == "export-evalplus")
+    if args and args[0] == "repeat":
+        from .repeat import main as repeat_main
+        return repeat_main(args[1:])
     if args and args[0] == "compare":
         return _compare_main(args[1:])
     if args and args[0] == "retry-plan":
@@ -501,6 +556,14 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "preflight":
         return _preflight_main(args[1:])
     return _run_main(args)
+
+
+def main(argv: list[str] | None = None) -> int:
+    stdout = sys.stdout
+    try:
+        return _dispatch(argv)
+    finally:
+        sys.stdout = stdout
 
 
 if __name__ == "__main__":

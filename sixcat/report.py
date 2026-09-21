@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Mapping, TextIO
@@ -11,8 +12,8 @@ from .score import CATEGORIES
 
 
 RESULT_SCHEMA = "sixcat-v2"
-PARSER_VERSION = "v4"
-READABLE_PARSER_VERSIONS = frozenset({"v2", "v3", PARSER_VERSION})
+PARSER_VERSION = "v5"
+READABLE_PARSER_VERSIONS = frozenset({"v2", "v3", "v4", PARSER_VERSION})
 
 
 class ResultFormatError(ValueError):
@@ -57,7 +58,7 @@ def _validate_common(document: Mapping[str, Any], source: str) -> None:
         raise ResultFormatError(f"{source}: result missing categories: {', '.join(missing_categories)}")
     for category in CATEGORIES:
         score = categories[category]
-        if score is not None and (not isinstance(score, (int, float)) or isinstance(score, bool)):
+        if score is not None and (not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score) or not 0 <= score <= 100):
             raise ResultFormatError(f"{source}: category {category} score must be numeric or null")
 
 
@@ -69,7 +70,7 @@ def _normalise_overall(document: Mapping[str, Any], policy_name: str, source: st
         score = overall.get("score")
     else:
         score = overall
-    if score is not None and (not isinstance(score, (int, float)) or isinstance(score, bool)):
+    if score is not None and (not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score) or not 0 <= score <= 100):
         raise ResultFormatError(f"{source}: overall score must be numeric or null")
     return {"policy": policy_name, "score": score}
 
@@ -156,6 +157,44 @@ def _normalise_current(document: Mapping[str, Any], source: str) -> dict[str, An
     if not isinstance(document.get("overall_flags"), list):
         raise ResultFormatError(f"{source}: current result requires overall_flags list")
 
+    if document.get("parser") == PARSER_VERSION:
+        from .manifest import ATTEMPT_POLICY, fingerprint
+        from .score import category_score, overall_score
+        if document.get("attempt_policy") != ATTEMPT_POLICY:
+            raise ResultFormatError(f"{source}: v5 requires immutable first-response attempt policy")
+        manifest = document.get("benchmark_manifest")
+        if not isinstance(manifest, dict):
+            raise ResultFormatError(f"{source}: v5 requires benchmark manifest")
+        payload = {k: v for k, v in manifest.items() if k != "fingerprint"}
+        if fingerprint(payload) != document.get("benchmark_fingerprint") or manifest.get("fingerprint") != document.get("benchmark_fingerprint"):
+            raise ResultFormatError(f"{source}: benchmark manifest fingerprint is inconsistent")
+        items = document.get("items")
+        if not isinstance(items, Mapping):
+            raise ResultFormatError(f"{source}: v5 requires item receipts")
+        for category in CATEGORIES:
+            rows = items.get(category)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) or type(row.get("ok")) is not bool or row.get("scored") is False for row in rows):
+                raise ResultFormatError(f"{source}: invalid scored rows in {category}")
+            if len(rows) != stats[category]["n"] or len(rows) != (document.get("n") or {}).get(category):
+                raise ResultFormatError(f"{source}: row/count mismatch in {category}")
+            if category_score(rows) != document["categories"][category]:
+                raise ResultFormatError(f"{source}: score does not match rows in {category}")
+            keys = [str(row.get("key") or row.get("id")) for row in rows]
+            selected = (manifest.get("selected_keys") or {}).get(category)
+            if not isinstance(selected, list) or len(selected) != len(set(selected)):
+                raise ResultFormatError(f"{source}: invalid manifest selection in {category}")
+            if len(keys) != len(set(keys)) or not set(keys).issubset(selected):
+                raise ResultFormatError(f"{source}: duplicate or unselected item keys in {category}")
+            if (document.get("expected_n") or {}).get(category) != len(selected):
+                raise ResultFormatError(f"{source}: expected count inconsistent in {category}")
+        expected_overall = overall_score(document["categories"]) if any(
+            v is not None for v in document["categories"].values()) else None
+        if _normalise_overall(document, str(policy["name"]), source)["score"] != expected_overall:
+            raise ResultFormatError(f"{source}: overall is inconsistent with category scores")
+        expected_complete = (document.get("n") == document.get("expected_n")
+                             and not document.get("timed_out") and document.get("policy_probe") == "ok")
+        if document.get("complete") is not expected_complete:
+            raise ResultFormatError(f"{source}: complete flag is inconsistent")
     normalised = copy.deepcopy(dict(document))
     policy_name = str(policy["name"])
     normalised["overall"] = _normalise_overall(document, policy_name, source)
@@ -406,7 +445,7 @@ def _run_scope_mismatches(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[st
         mismatches.append(f"parser A={a.get('parser')!r} B={b.get('parser')!r}")
     if ("limit" in a) != ("limit" in b) or a.get("limit") != b.get("limit"):
         mismatches.append(f"limit A={a.get('limit')!r} B={b.get('limit')!r}")
-    for field in ("limit_scope", "selection_profile", "selection_fingerprint"):
+    for field in ("limit_scope", "selection_profile", "selection_fingerprint", "benchmark_fingerprint", "attempt_policy"):
         if (field in a) != (field in b) or a.get(field) != b.get(field):
             mismatches.append(f"{field} A={a.get(field)!r} B={b.get(field)!r}")
     if ("code_execution" in a) != ("code_execution" in b) or a.get("code_execution") != b.get("code_execution"):
@@ -424,6 +463,16 @@ def _run_scope_mismatches(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[st
     if differing_counts:
         mismatches.append("n " + ", ".join(differing_counts))
 
+    if a.get("complete") is False or b.get("complete") is False:
+        mismatches.append("incomplete planned scope")
+    for category in CATEGORIES:
+        a_rows = (a.get("items") or {}).get(category)
+        b_rows = (b.get("items") or {}).get(category)
+        if isinstance(a_rows, list) and isinstance(b_rows, list):
+            a_keys = [str(row.get("key", row.get("id"))) for row in a_rows]
+            b_keys = [str(row.get("key", row.get("id"))) for row in b_rows]
+            if len(set(a_keys)) != len(a_keys) or len(set(b_keys)) != len(b_keys) or set(a_keys) != set(b_keys):
+                mismatches.append(f"{category} item identities differ or contain duplicates")
     if bool(a.get("timed_out")) or bool(b.get("timed_out")):
         mismatches.append(f"timed_out A={bool(a.get('timed_out'))} B={bool(b.get('timed_out'))}")
     return mismatches

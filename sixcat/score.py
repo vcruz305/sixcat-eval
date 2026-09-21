@@ -65,7 +65,7 @@ def _normalize_num(raw: str) -> str:
 
 
 def _loop_source_text(row: Mapping[str, Any]) -> str:
-    return str(row.get("reasoning_content") or row.get("raw_text") or "")
+    return str(row.get("reasoning_content") or "") + "\n" + str(row.get("raw_text") or "")
 
 
 def max_repeated_ngram(text: str, size: int = _LOOP_NGRAM) -> int:
@@ -170,7 +170,7 @@ def category_stats(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "atok_sum": sum(atoks) if atoks else None,
         "rtok_p50": _percentile([float(v) for v in rtoks], 0.50),
         "atok_p50": _percentile([float(v) for v in atoks], 0.50),
-        "speed_n": min(len(prefill), len(decode)),
+        "speed_n": sum(1 for row in rows if isinstance(row.get("prefill_tps"), (int, float)) and isinstance(row.get("decode_tps"), (int, float))),
         "prefill_tps_p50": _percentile(prefill, 0.50),
         "prefill_tps_p95": _percentile(prefill, 0.95),
         "decode_tps_p50": _percentile(decode, 0.50),
@@ -268,3 +268,4 @@ def extract_gsm_number_conf(text: str) -> tuple[str | None, str]:
 def extract_gsm_number(text: str) -> str | None:
     number, _ = extract_gsm_number_conf(text)
     return number
+\n\n# Parser v5 lives in a focused module; aliases preserve the public score.py API.\nfrom .parsing import normalize_num as _normalize_num, parse_gsm_answer, parse_mc_answer, strip_reasoning as _strip_reasoning\n\ndef extract_mc_letter_conf(text: str, valid_letters: str | None = None) -> tuple[str | None, str]:\n    parsed = parse_mc_answer(text, valid_letters=valid_letters)\n    return parsed["value"], parsed["confidence"]\n\ndef extract_mc_letter(text: str) -> str | None:\n    return extract_mc_letter_conf(text)[0]\n\ndef extract_gsm_number_conf(text: str) -> tuple[str | None, str]:\n    parsed = parse_gsm_answer(text)\n    return parsed["value"], parsed["confidence"]\n\ndef extract_gsm_number(text: str) -> str | None:\n    return extract_gsm_number_conf(text)[0]\n
