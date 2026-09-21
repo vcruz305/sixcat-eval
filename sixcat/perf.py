@@ -672,7 +672,7 @@ def confirmation_run(
     result["p99_note"] = (
         "p99 is an interpolated empirical percentile with fewer than 100 successful requests; "
         "use --samples 100 or more for a more meaningful tail estimate"
-        if samples < 100
+        if result["succeeded"] < 100
         else None
     )
     return result
@@ -825,6 +825,14 @@ def _resolve_cli_policy(args) -> Any:
     return policy
 
 
+def _profile_level(profile: dict[str, Any], concurrency: int) -> dict[str, Any] | None:
+    curve = profile.get("curve") or {}
+    for level in curve.get("levels") or []:
+        if int(level.get("concurrency", -1)) == concurrency:
+            return level
+    return None
+
+
 def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
     lines = [
         "",
@@ -833,12 +841,19 @@ def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
     ]
     decode = profiles.get("decode")
     if decode:
-        dist = (decode["confirmation"].get("effective_decode_tps") or {})
+        # Single-stream C=1 is the honest headline for maximum per-stream decode.
+        source = _profile_level(decode, 1) or decode["confirmation"]
+        dist = source.get("effective_decode_tps") or {}
         lines.append(
-            "DECODE: "
+            "DECODE (single-stream C=1): "
             f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
-            f"max={_fmt(dist.get('max'))} best-sustained(p90)={_fmt(dist.get('p90'))} tok/s "
-            f"@ C={decode['selected_concurrency']}"
+            f"max={_fmt(dist.get('max'))} best-sustained(p90)={_fmt(dist.get('p90'))} tok/s"
+        )
+        confirm = decode["confirmation"]
+        lines.append(
+            "DECODE serving knee: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"@ C={decode['selected_concurrency']} (includes prefill/queue)"
         )
     balanced = profiles.get("balanced")
     if balanced:
@@ -851,12 +866,20 @@ def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
         )
     prefill = profiles.get("prefill")
     if prefill:
-        dist = (prefill["confirmation"].get("effective_prefill_tps") or {})
+        # Use C=1 for the single-request prompt-ingestion headline; the selected
+        # concurrency remains available separately in the profile receipt.
+        source = _profile_level(prefill, 1) or prefill["confirmation"]
+        dist = source.get("effective_prefill_tps") or {}
         lines.append(
-            "PREFILL: "
+            "PREFILL (single-stream C=1): "
             f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
-            f"max={_fmt(dist.get('max'))} effective tok/s "
-            f"@ C={prefill['selected_concurrency']}"
+            f"max={_fmt(dist.get('max'))} effective tok/s"
+        )
+        confirm = prefill["confirmation"]
+        lines.append(
+            "PREFILL serving knee: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"@ C={prefill['selected_concurrency']} (includes decode/queue)"
         )
     custom = profiles.get("custom")
     if custom:
