@@ -50,6 +50,13 @@ def streaming_endpoint(*, reject_stream_options: bool = False):
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             with lock:
                 state["posts"] += 1
+            if not payload.get("stream"):
+                self._json({
+                    "model": "fixture",
+                    "choices": [{"message": {"content": "A", "tool_calls": []}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 32, "completion_tokens": 1},
+                })
+                return
             if reject_stream_options and "stream_options" in payload:
                 with lock:
                     state["fallbacks"] += 1
@@ -244,3 +251,30 @@ def test_speed_cli_fixed_concurrency_writes_json(tmp_path):
     assert report["confirmation"]["ttft"]["p95"] > 0
     assert report["confirmation"]["server_decode_tps"]["p50"] == 80
     assert state["max_active"] >= 2
+
+
+
+def test_scored_run_auto_concurrency_records_curve_and_selected_level(tmp_path):
+    from sixcat.__main__ import main
+    output = tmp_path / "auto.json"
+    with streaming_endpoint() as (url, _):
+        rc = main([
+            "--base-url", url,
+            "--model", "fixture",
+            "--limit", "1",
+            "--skip-code-exec",
+            "--auto-concurrency",
+            "--concurrency-candidates", "1,2",
+            "--calibration-seconds", "5",
+            "--calibration-prompt-words", "32",
+            "--calibration-max-tokens", "8",
+            "--max-minutes", "1",
+            "--out", str(output),
+            "--no-resume",
+        ])
+    assert rc == 0
+    result = json.loads(output.read_text())
+    assert result["performance_calibration"]["unscored"] is True
+    assert result["concurrency"] == result["performance_calibration"]["recommended_concurrency"]
+    assert result["performance_calibration"]["measured_levels"] == [1, 2]
+    assert result["n"] == {"knowledge": 1, "math": 1, "truth": 1, "instruct": 1, "code": 0, "tools": 1}
