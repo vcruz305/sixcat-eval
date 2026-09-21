@@ -201,6 +201,20 @@ def _sample_from_stream(
     if provider_mean_itl is None and provider_tpot is not None:
         provider_mean_itl = provider_tpot
 
+    provider_effective_prefill_tps = None
+    if prompt_tokens is not None and provider_ttft is not None and provider_ttft > 0:
+        provider_effective_prefill_tps = prompt_tokens / provider_ttft
+    provider_effective_decode_tps = None
+    if (
+        completion_tokens is not None
+        and completion_tokens > 1
+        and provider_generation is not None
+        and provider_generation > 0
+    ):
+        provider_effective_decode_tps = (completion_tokens - 1.0) / provider_generation
+    elif completion_tokens is not None and completion_tokens > 1 and provider_tpot is not None and provider_tpot > 0:
+        provider_effective_decode_tps = 1.0 / provider_tpot
+
     return {
         "ok": first_output is not None,
         "compatibility_mode": compatibility_mode,
@@ -220,6 +234,8 @@ def _sample_from_stream(
         "provider_queue_s": provider_queue,
         "provider_mean_itl_s": provider_mean_itl,
         "provider_tokens_per_second": _number(metrics.get("tokens_per_second")),
+        "provider_effective_prefill_tps": provider_effective_prefill_tps,
+        "provider_effective_decode_tps": provider_effective_decode_tps,
     }
 
 
@@ -323,6 +339,10 @@ def _summarize(samples: list[dict[str, Any]], *, elapsed_s: float, concurrency: 
         "provider_ttft_s": "provider_ttft",
         "provider_queue_s": "provider_queue",
         "provider_mean_itl_s": "provider_mean_itl",
+        "provider_generation_s": "provider_generation",
+        "provider_tokens_per_second": "provider_tokens_per_second",
+        "provider_effective_prefill_tps": "provider_effective_prefill_tps",
+        "provider_effective_decode_tps": "provider_effective_decode_tps",
     }
     distributions = {
         output: _distribution([sample[field] for sample in successes if sample.get(field) is not None])
@@ -649,6 +669,12 @@ def render_confirmation(result: dict[str, Any]) -> str:
     provider_queue = (result.get("provider_queue") or {}).get("p50")
     if provider_queue is not None:
         lines.append(f"provider queue p50: {_fmt_ms(provider_queue)}")
+    provider_prefill = (result.get("provider_effective_prefill_tps") or {}).get("p50")
+    if provider_prefill is not None:
+        lines.append(f"provider-effective prefill p50: {_fmt(provider_prefill)} tok/s")
+    provider_decode = (result.get("provider_effective_decode_tps") or {}).get("p50")
+    if provider_decode is not None:
+        lines.append(f"provider-effective decode p50: {_fmt(provider_decode)} tok/s")
     if result.get("p99_sample_warning"):
         lines.append("NOTE: p99 has <100 request samples; use --samples 100+ for stronger tail-latency evidence.")
     return "\n".join(lines)
