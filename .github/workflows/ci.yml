@@ -73,6 +73,7 @@ jobs:
           python -m pip install build twine
           python -m build
           python -m twine check dist/*
+          python -m pip download --dest wheelhouse . pytest pytest-timeout coverage httpx
       - name: Verify installed wheel outside source checkout
         run: |
           python -m venv /tmp/sixcat-wheel
@@ -91,4 +92,5 @@ jobs:
           path: |
             dist/*
             sixcat-source.tar.gz
+            wheelhouse/*
           retention-days: 14
