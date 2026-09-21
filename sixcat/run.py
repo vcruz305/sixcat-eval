@@ -509,6 +509,7 @@ def run_battery(
         "attempt_policy": ATTEMPT_POLICY,
         "schedule": SCHEDULE if session is not None else "category-order",
         "concurrency": session.concurrency if session is not None else 1,
+        "performance_calibration": copy.deepcopy(getattr(client, "performance_calibration", None)),
         "benchmark_manifest": manifest,
         "benchmark_fingerprint": manifest["fingerprint"],
         "expected_n": expected_counts(limit, skip_code_exec),
@@ -575,6 +576,12 @@ def render_table(result: dict) -> str:
         f"attempts: {result.get('attempt_policy', 'legacy/unrecorded')}",
         f"concurrency: {result.get('concurrency', 1)}; schedule: {result.get('schedule', 'legacy/unrecorded')}",
     ]
+    calibration = result.get("performance_calibration")
+    if isinstance(calibration, dict):
+        lines.append(
+            f"auto-concurrency: recommended={calibration.get('recommended_concurrency')} "
+            f"peak={calibration.get('peak_concurrency')} confidence={calibration.get('confidence')}"
+        )
     preflight = result.get("preflight")
     if isinstance(preflight, dict):
         lines.extend(["", format_preflight(preflight)])

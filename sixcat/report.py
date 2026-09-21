@@ -403,9 +403,9 @@ def render_compare_table(a: Mapping[str, Any], b: Mapping[str, Any]) -> str:
     lines = [
         "=== SIXCAT COMPARE (B - A) ===",
         f"A: model={a.get('model')} policy={a_name} parser={a.get('parser')} "
-        f"fp={a.get('policy_fingerprint')} source={a.get('policy_source')}",
+        f"fp={a.get('policy_fingerprint')} source={a.get('policy_source')} concurrency={a.get('concurrency', 'unrecorded')}",
         f"B: model={b.get('model')} policy={b_name} parser={b.get('parser')} "
-        f"fp={b.get('policy_fingerprint')} source={b.get('policy_source')}",
+        f"fp={b.get('policy_fingerprint')} source={b.get('policy_source')} concurrency={b.get('concurrency', 'unrecorded')}",
         "",
         f"{'category':<30} {'A':>8} {'B':>8} {'B-A':>8} {'n A/B':>9}  flags",
         "-" * 90,
@@ -523,5 +523,11 @@ def compare_results(
     if a.get("model") != b.get("model"):
         notices.append(
             f"NOTICE: MODEL MISMATCH: A={a.get('model')} B={b.get('model')} (cross-model comparison)"
+        )
+    if a.get("concurrency") != b.get("concurrency"):
+        notices.append(
+            "NOTICE: CONCURRENCY MISMATCH: "
+            f"A={a.get('concurrency', 'unrecorded')} B={b.get('concurrency', 'unrecorded')}; "
+            "some inference stacks are not perfectly batch-invariant, so keep this serving-condition difference in the comparison receipt"
         )
     return render_compare_table(a, b), notices

@@ -31,6 +31,66 @@ For llama.cpp, provision enough server parallel slots (`--parallel` / `-np`). Fo
 
 The time limit is a **shared monotonic invocation deadline**, including preflight and active requests. HTTP requests have total deadlines, so a slow-drip response cannot hold the client indefinitely. After the deadline, queued work is not started and interrupted items remain unscored. Local cleanup and saving receipts can take a little longer. Disconnecting a request does not guarantee that a remote server cancels GPU work. A 30-minute budget also cannot guarantee that any particular model finishes all 120 items.
 
+## Adaptive concurrency and serving-speed benchmark
+
+SixCat 0.7 can measure an already-running inference server before the scored run and select a concurrency level automatically.
+
+```bash
+python -m sixcat \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model YOUR_MODEL \
+  --policy strict \
+  --auto-concurrency \
+  --max-minutes 30 \
+  --out results/model.json
+```
+
+The default discovery curve tests **1, 2, 4, and 8** in-flight requests with unscored synthetic prompts. It does not send SixCat benchmark questions during calibration. For each level it measures aggregate output throughput, request rate, client-observed TTFT, end-to-end latency, effective prefill/decode rates, and provider/server timings when available.
+
+The default recommendation is the **smallest concurrency that reaches at least 90% of the measured peak aggregate throughput**. This deliberately chooses the throughput knee instead of blindly selecting the largest or absolute-peak concurrency, reducing unnecessary TTFT/KV-cache pressure for tiny marginal gains. The curve counts against the same 30-minute invocation budget.
+
+Customize the search when useful:
+
+```bash
+python -m sixcat \
+  --model YOUR_MODEL \
+  --auto-concurrency \
+  --concurrency-candidates 1,2,4,8,16 \
+  --calibration-seconds 90 \
+  --calibration-knee-fraction 0.90
+```
+
+### Speed-only mode
+
+For users who only want to validate serving performance, `sixcat speed` runs no scored benchmark:
+
+```bash
+python -m sixcat speed \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model YOUR_MODEL \
+  --candidates 1,2,4,8 \
+  --samples 32 \
+  --out results/model-speed.json
+```
+
+It first discovers the concurrency curve, then performs a confirmation run at the recommended concurrency. You can skip discovery and test a fixed level with `--concurrency 4`.
+
+Reported metrics include:
+
+- **client TTFT p50/p95/p99** — request start to first streamed output token; this includes network, queueing, and prefill;
+- **end-to-end latency p50/p95/p99**;
+- **TPOT p50/p95/p99** — client-observed time per output token after the first token;
+- **aggregate output tok/s** across all concurrent requests;
+- **request rate**;
+- **effective prefill tok/s** — prompt tokens / client TTFT, explicitly labeled effective because it includes queue/network overhead;
+- **effective decode tok/s** from streamed completion tokens and decode wall time;
+- **server prefill/decode tok/s** when the provider exposes native timing fields;
+- **provider TTFT/queue/ITL** when the endpoint exposes per-request metrics.
+
+llama.cpp currently exposes prompt/decode timing fields and streamed usage through its OpenAI-compatible server. Current vLLM can attach per-request TTFT, generation time, queue time, mean ITL, and token throughput to the final usage chunk when the server is launched with `--enable-per-request-metrics`; SixCat consumes those fields when present. SixCat keeps client-observed and provider-native measurements separate instead of pretending they are interchangeable.
+
+With fewer than 100 confirmation requests, the report marks p99 as a low-sample empirical/interpolated tail estimate. Use `--samples 100` or more when p99 itself is an important acceptance criterion.
+
 ## Score contract
 
 | Category | Source | Standard count | Verdict |

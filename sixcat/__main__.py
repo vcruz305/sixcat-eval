@@ -113,6 +113,9 @@ def _write_result(result: dict, out_path: Path, log_path: Path) -> None:
 
 
 def _run_main(argv: list[str]) -> int:
+    explicit_concurrency = any(
+        token == "--concurrency" or token.startswith("--concurrency=") for token in argv
+    )
     p = argparse.ArgumentParser(prog="sixcat", description="Six community categories + one overall score.")
     p.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
     p.add_argument("--model", required=True)
@@ -183,8 +186,18 @@ def _run_main(argv: list[str]) -> int:
         "--concurrency",
         type=int,
         default=1,
-        help="In-flight scored items (llama-server -np should be >= this). Default 1. Not part of journal identity.",
+        help="In-flight scored items. Default 1; use --auto-concurrency to discover the serving throughput knee first.",
     )
+    p.add_argument(
+        "--auto-concurrency",
+        action="store_true",
+        help="Run an unscored synthetic concurrency curve first, then use its recommended concurrency for the scored run.",
+    )
+    p.add_argument("--concurrency-candidates", default="1,2,4,8")
+    p.add_argument("--calibration-seconds", type=float, default=60.0)
+    p.add_argument("--calibration-knee-fraction", type=float, default=0.90)
+    p.add_argument("--calibration-prompt-words", type=int, default=256)
+    p.add_argument("--calibration-max-tokens", type=int, default=64)
     p.add_argument(
         "--transport",
         choices=("openai", "stdio"),
@@ -237,8 +250,18 @@ def _run_main(argv: list[str]) -> int:
         p.error("--ctx must be a positive token count")
     if args.concurrency < 1:
         p.error("--concurrency must be >= 1")
+    if args.auto_concurrency and explicit_concurrency:
+        p.error("--auto-concurrency and an explicit --concurrency are mutually exclusive")
+    if args.auto_concurrency and args.transport != "openai":
+        p.error("--auto-concurrency requires --transport openai")
     if args.transport == "stdio" and args.concurrency != 1:
         p.error("--transport stdio requires --concurrency 1")
+    if not math.isfinite(args.calibration_seconds) or args.calibration_seconds <= 0:
+        p.error("--calibration-seconds must be finite and positive")
+    if not 0.5 <= args.calibration_knee_fraction <= 1.0:
+        p.error("--calibration-knee-fraction must be between 0.5 and 1.0")
+    if args.calibration_prompt_words < 16 or args.calibration_max_tokens < 2:
+        p.error("--calibration-prompt-words must be >= 16 and --calibration-max-tokens >= 2")
     protocol_out = sys.stdout
     if args.transport == "stdio":
         args.base_url = "stdio://harness"
@@ -290,6 +313,15 @@ def _run_main(argv: list[str]) -> int:
             p.error(f"--retry requires an existing journal at {log_path}")
     completed_results: dict[str, dict] = {}
     invocation_budget = TimeBudget(seconds=seconds)
+    calibration_cache: dict[tuple, dict] = {}
+    if args.auto_concurrency:
+        from .perf import parse_candidates
+        try:
+            auto_candidates = parse_candidates(args.concurrency_candidates)
+        except ValueError as exc:
+            p.error(str(exc))
+    else:
+        auto_candidates = [args.concurrency]
     for policy_name in policy_names:
         out_path, log_path = run_paths[policy_name]
         if args.policy == "both":
@@ -328,6 +360,41 @@ def _run_main(argv: list[str]) -> int:
             client.server_props = fetch_server_props(args.base_url, args.api_key) if args.transport == "openai" else {"source": "stdio"}
         client.server_identity = observed_server_identity(client.server_props, args.model)
         client.artifact_id = args.artifact_id
+        performance_calibration = None
+        effective_concurrency = args.concurrency
+        if args.auto_concurrency:
+            from .perf import discover_concurrency, render_curve
+            cache_key = (
+                args.model,
+                bool(policy.thinking),
+                tuple(auto_candidates),
+                args.calibration_prompt_words,
+                args.calibration_max_tokens,
+                args.calibration_knee_fraction,
+            )
+            if cache_key not in calibration_cache:
+                remaining = invocation_budget.remaining()
+                calibration_seconds = args.calibration_seconds
+                if remaining is not None:
+                    calibration_seconds = min(calibration_seconds, remaining)
+                if calibration_seconds <= 0:
+                    p.error("the invocation deadline expired before auto-concurrency calibration")
+                try:
+                    calibration_cache[cache_key] = discover_concurrency(
+                        client,
+                        candidates=auto_candidates,
+                        max_seconds=calibration_seconds,
+                        prompt_words=args.calibration_prompt_words,
+                        max_tokens=args.calibration_max_tokens,
+                        knee_fraction=args.calibration_knee_fraction,
+                        outer_deadline=invocation_budget.deadline,
+                    )
+                except (ValueError, TimeoutError) as exc:
+                    p.error(f"auto-concurrency calibration failed: {exc}")
+                print(render_curve(calibration_cache[cache_key]), flush=True)
+            performance_calibration = copy.deepcopy(calibration_cache[cache_key])
+            effective_concurrency = int(performance_calibration["recommended_concurrency"])
+        client.performance_calibration = performance_calibration
         identity = _journal_identity(
             model=args.model,
             base_url=args.base_url,
@@ -352,10 +419,10 @@ def _run_main(argv: list[str]) -> int:
             retry_failed=args.retry in {"failed", "incomplete"},
             include_remaining=args.retry != "failed",
             retry_mode=args.retry,
-            concurrency=args.concurrency,
+            concurrency=effective_concurrency,
         )
         print(
-            f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={args.concurrency}",
+            f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={effective_concurrency}",
             flush=True,
         )
         try:
@@ -547,6 +614,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args and args[0] == "repeat":
         from .repeat import main as repeat_main
         return repeat_main(args[1:])
+    if args and args[0] == "speed":
+        from .perf import main as speed_main
+        return speed_main(args[1:])
     if args and args[0] == "compare":
         return _compare_main(args[1:])
     if args and args[0] == "retry-plan":
