@@ -108,9 +108,13 @@ def _policy_payload(client: ChatClient, prompt: str, max_tokens: int) -> dict[st
     return payload
 
 
-def synthetic_prompt(*, concurrency: int, index: int, words: int) -> str:
-    # The unique marker comes first so prefix caches cannot reuse the large probe body.
-    marker = f"SIXCAT-SPEED-C{concurrency}-I{index}-X{(concurrency * 7919 + index * 104729) % 1_000_003}"
+def synthetic_prompt(*, concurrency: int, index: int, words: int, probe_id: str, phase: str) -> str:
+    # The unique marker comes first so prefix caches cannot reuse the large probe body,
+    # including between warmup/curve/confirmation phases or separate SixCat invocations.
+    marker = (
+        f"SIXCAT-SPEED-{probe_id}-{phase}-C{concurrency}-I{index}-"
+        f"X{(concurrency * 7919 + index * 104729) % 1_000_003}"
+    )
     phrase = "amber cedar cobalt delta ember frost granite harbor iris juniper kinetic lunar"
     tokens = phrase.split()
     body = " ".join(tokens[pos % len(tokens)] for pos in range(words))
@@ -349,6 +353,8 @@ async def _run_level_async(
     prompt_words: int,
     max_tokens: int,
     deadline: float,
+    probe_id: str,
+    phase: str,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     timeout_s = deadline - time.monotonic()
@@ -363,7 +369,13 @@ async def _run_level_async(
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return {"ok": False, "error_type": "DeadlineExceeded"}
-                prompt = synthetic_prompt(concurrency=concurrency, index=index, words=prompt_words)
+                prompt = synthetic_prompt(
+                    concurrency=concurrency,
+                    index=index,
+                    words=prompt_words,
+                    probe_id=probe_id,
+                    phase=phase,
+                )
                 try:
                     return await _stream_one(
                         http,
@@ -394,6 +406,8 @@ def run_level(
     prompt_words: int,
     max_tokens: int,
     deadline: float,
+    probe_id: str | None = None,
+    phase: str = "measure",
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_level_async(
@@ -403,6 +417,8 @@ def run_level(
             prompt_words=prompt_words,
             max_tokens=max_tokens,
             deadline=deadline,
+            probe_id=probe_id or uuid.uuid4().hex[:12],
+            phase=phase,
         )
     )
 
@@ -478,6 +494,20 @@ def discover_concurrency(
     if outer_deadline is not None:
         deadline = min(deadline, outer_deadline)
 
+    probe_id = uuid.uuid4().hex[:12]
+    warmup = None
+    if time.monotonic() < deadline:
+        warmup = run_level(
+            client,
+            concurrency=1,
+            requests=1,
+            prompt_words=max(32, min(prompt_words, 128)),
+            max_tokens=max(2, min(max_tokens, 16)),
+            deadline=deadline,
+            probe_id=probe_id,
+            phase="warmup",
+        )
+
     levels: list[dict[str, Any]] = []
     for concurrency in candidates:
         if time.monotonic() >= deadline:
@@ -490,6 +520,8 @@ def discover_concurrency(
             prompt_words=prompt_words,
             max_tokens=max_tokens,
             deadline=deadline,
+            probe_id=probe_id,
+            phase=f"curve-c{concurrency}",
         )
         levels.append(level)
 
@@ -504,6 +536,8 @@ def discover_concurrency(
         "measured_levels": [level["concurrency"] for level in levels],
         "duration_s": time.monotonic() - started,
         "deadline_s": max_seconds,
+        "probe_id": probe_id,
+        "warmup": warmup,
         "levels": levels,
         **recommendation,
     }
@@ -520,6 +554,17 @@ def confirmation_run(
 ) -> dict[str, Any]:
     if samples < 1:
         raise ValueError("speed confirmation samples must be positive")
+    probe_id = uuid.uuid4().hex[:12]
+    warmup = run_level(
+        client,
+        concurrency=1,
+        requests=1,
+        prompt_words=max(32, min(prompt_words, 128)),
+        max_tokens=max(2, min(max_tokens, 16)),
+        deadline=deadline,
+        probe_id=probe_id,
+        phase="warmup",
+    )
     result = run_level(
         client,
         concurrency=concurrency,
@@ -527,7 +572,11 @@ def confirmation_run(
         prompt_words=prompt_words,
         max_tokens=max_tokens,
         deadline=deadline,
+        probe_id=probe_id,
+        phase="confirmation",
     )
+    result["warmup"] = warmup
+    result["probe_id"] = probe_id
     result["p99_sample_warning"] = samples < 100
     result["p99_note"] = (
         "p99 is an interpolated empirical percentile with fewer than 100 requests; "
