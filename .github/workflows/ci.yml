@@ -1,0 +1,94 @@
+name: SixCat CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sixcat-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.11'
+          - os: ubuntu-latest
+            python: '3.14'
+          - os: windows-latest
+            python: '3.13'
+          - os: macos-latest
+            python: '3.13'
+    env:
+      PYTHONUTF8: '1'
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install project and test tools
+        run: python -m pip install -e . pytest pytest-timeout coverage
+      - name: Unit and integration tests (no model or API key required)
+        run: python -m coverage run --source=sixcat -m pytest tests -q --timeout=90 --junitxml=junit.xml
+      - name: Coverage report
+        if: always()
+        run: python -m coverage xml
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-evidence-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            junit.xml
+            coverage.xml
+          retention-days: 14
+  package:
+    name: Build and installed-wheel smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Build distributions
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+      - name: Verify installed wheel outside source checkout
+        run: |
+          python -m venv /tmp/sixcat-wheel
+          /tmp/sixcat-wheel/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/sixcat-wheel/bin/python -m sixcat --help
+          /tmp/sixcat-wheel/bin/python -c "from sixcat.dataio import read_jsonl; assert len(read_jsonl('humaneval.jsonl')) == 164"
+      - name: Archive exact tested sources
+        if: always()
+        run: git archive --format=tar.gz --output=sixcat-source.tar.gz HEAD
+      - name: Preserve reproducible build artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sixcat-build
+          path: |
+            dist/*
+            sixcat-source.tar.gz
+          retention-days: 14
