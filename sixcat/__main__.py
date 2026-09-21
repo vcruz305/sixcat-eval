@@ -614,6 +614,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args and args[0] == "repeat":
         from .repeat import main as repeat_main
         return repeat_main(args[1:])
+    if args and args[0] == "speed":
+        from .perf import main as speed_main
+        return speed_main(args[1:])
     if args and args[0] == "compare":
         return _compare_main(args[1:])
     if args and args[0] == "retry-plan":
