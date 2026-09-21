@@ -577,9 +577,9 @@ def confirmation_run(
     )
     result["warmup"] = warmup
     result["probe_id"] = probe_id
-    result["p99_sample_warning"] = samples < 100
+    result["p99_sample_warning"] = result["succeeded"] < 100
     result["p99_note"] = (
-        "p99 is an interpolated empirical percentile with fewer than 100 requests; "
+        "p99 is an interpolated empirical percentile with fewer than 100 successful requests; "
         "use --samples 100 or more for a more meaningful tail estimate"
         if samples < 100
         else None
@@ -633,11 +633,15 @@ def render_confirmation(result: dict[str, Any]) -> str:
         f"TPOT: p50={_fmt_ms((result['tpot']).get('p50'))} "
         f"p95={_fmt_ms((result['tpot']).get('p95'))} "
         f"p99={_fmt_ms((result['tpot']).get('p99'))}",
-        f"effective prefill: p50={_fmt((result['effective_prefill_tps']).get('p50'))} tok/s "
+        f"effective prefill: p5={_fmt((result['effective_prefill_tps']).get('p5'))} "
+        f"p50={_fmt((result['effective_prefill_tps']).get('p50'))} tok/s "
         "(client-observed; includes queue/network)",
-        f"effective decode: p50={_fmt((result['effective_decode_tps']).get('p50'))} tok/s",
-        f"server prefill: p50={_fmt((result['server_prefill_tps']).get('p50'))} tok/s",
-        f"server decode: p50={_fmt((result['server_decode_tps']).get('p50'))} tok/s",
+        f"effective decode: p5={_fmt((result['effective_decode_tps']).get('p5'))} "
+        f"p50={_fmt((result['effective_decode_tps']).get('p50'))} tok/s",
+        f"server prefill: p5={_fmt((result['server_prefill_tps']).get('p5'))} "
+        f"p50={_fmt((result['server_prefill_tps']).get('p50'))} tok/s",
+        f"server decode: p5={_fmt((result['server_decode_tps']).get('p5'))} "
+        f"p50={_fmt((result['server_decode_tps']).get('p50'))} tok/s",
     ]
     provider_ttft = (result.get("provider_ttft") or {}).get("p50")
     if provider_ttft is not None:
@@ -723,9 +727,16 @@ def main(argv: list[str]) -> int:
     if not 0.5 <= args.knee_fraction <= 1.0:
         parser.error("--knee-fraction must be between 0.5 and 1.0")
 
+    custom_values = (args.temperature, args.top_p, args.top_k, args.min_p)
+    if args.policy == "custom" and args.temperature is None:
+        parser.error("--policy custom requires --temperature")
+    if args.policy != "custom" and any(value is not None for value in custom_values):
+        parser.error("--temperature/--top-p/--top-k/--min-p require --policy custom")
+    if args.policy_family and args.policy != "vendor":
+        parser.error("--policy-family requires --policy vendor")
     try:
         policy = _resolve_cli_policy(args)
-        candidates = parse_candidates(args.candidates)
+        candidates = parse_candidates(args.candidates) if args.concurrency is None else [args.concurrency]
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -778,7 +789,7 @@ def main(argv: list[str]) -> int:
         "curve": curve,
         "selected_concurrency": selected,
         "confirmation": confirmation,
-        "total_elapsed_s": total.seconds - (total.remaining() or 0.0),
+        "total_elapsed_s": time.monotonic() - total.start,
     }
     if args.out:
         atomic_write_json(args.out, report)
