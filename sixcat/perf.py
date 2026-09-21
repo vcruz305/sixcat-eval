@@ -681,40 +681,54 @@ def confirmation_run(
 def render_curve(curve: dict[str, Any]) -> str:
     lines = [
         "CONCURRENCY CURVE (unscored synthetic probes)",
-        f"{'C':>4} {'ok':>7} {'out t/s':>10} {'req/s':>9} {'TTFT p95':>10} {'E2E p95':>10} {'dec p50':>10}",
-        "-" * 72,
+        f"{'C':>4} {'ok':>7} {'usable':>7} {'agg t/s':>10} {'req/s':>9} {'TTFT p95':>10} {'dec p50':>10}",
+        "-" * 76,
     ]
     for level in curve.get("levels") or []:
         ttft = (level.get("ttft") or {}).get("p95")
-        e2e = (level.get("e2e") or {}).get("p95")
         decode = (level.get("effective_decode_tps") or {}).get("p50")
         lines.append(
             f"{level['concurrency']:>4} "
             f"{level['succeeded']}/{level['requested']:<5} "
+            f"{('yes' if level.get('usable') else 'NO'):>7} "
             f"{_fmt(level.get('aggregate_output_tps')):>10} "
             f"{_fmt(level.get('request_rps')):>9} "
             f"{_fmt_ms(ttft):>10} "
-            f"{_fmt_ms(e2e):>10} "
             f"{_fmt(decode):>10}"
         )
     lines.extend(
         [
-            "-" * 72,
+            "-" * 76,
+            "aggregate output tps = level-wall throughput; includes prefill, queueing, and failure wall time",
+            f"max usable concurrency: {curve.get('max_usable_concurrency')} "
+            f"(min success={float(curve.get('min_success_rate', 0.95)):.0%})",
             f"recommended concurrency: {curve.get('recommended_concurrency')} "
-            f"(peak={curve.get('peak_concurrency')}, confidence={curve.get('confidence')})",
+            f"(usable peak={curve.get('peak_concurrency')}, confidence={curve.get('confidence')})",
             f"selection: {curve.get('reason')}",
         ]
     )
+    rejected = curve.get("rejected_concurrency") or []
+    if rejected:
+        lines.append("excluded from knee for failures: " + ", ".join(f"C={value}" for value in rejected))
     return "\n".join(lines)
 
 
 def render_confirmation(result: dict[str, Any]) -> str:
+    decode = result.get("effective_decode_tps") or {}
+    prefill = result.get("effective_prefill_tps") or {}
     lines = [
         "",
         f"SPEED CONFIRMATION @ concurrency={result['concurrency']} "
         f"({result['succeeded']}/{result['requested']} successful)",
-        f"aggregate output throughput: {_fmt(result.get('aggregate_output_tps'))} tok/s",
+        f"aggregate output tps (includes prefill/queue): {_fmt(result.get('aggregate_output_tps'))} tok/s",
         f"request rate: {_fmt(result.get('request_rps'))} req/s",
+        "DECODE — per-stream sustained generation:",
+        f"  p50={_fmt(decode.get('p50'))}  p95={_fmt(decode.get('p95'))}  "
+        f"max={_fmt(decode.get('max'))} tok/s",
+        f"  best-sustained decode (p90): {_fmt(decode.get('p90'))} tok/s",
+        "PREFILL — client-observed effective prompt ingestion:",
+        f"  p50={_fmt(prefill.get('p50'))}  p95={_fmt(prefill.get('p95'))}  "
+        f"max={_fmt(prefill.get('max'))} tok/s (includes network/queue)",
         f"client TTFT: p50={_fmt_ms((result['ttft']).get('p50'))} "
         f"p95={_fmt_ms((result['ttft']).get('p95'))} "
         f"p99={_fmt_ms((result['ttft']).get('p99'))}",
@@ -724,11 +738,6 @@ def render_confirmation(result: dict[str, Any]) -> str:
         f"TPOT: p50={_fmt_ms((result['tpot']).get('p50'))} "
         f"p95={_fmt_ms((result['tpot']).get('p95'))} "
         f"p99={_fmt_ms((result['tpot']).get('p99'))}",
-        f"effective prefill: p5={_fmt((result['effective_prefill_tps']).get('p5'))} "
-        f"p50={_fmt((result['effective_prefill_tps']).get('p50'))} tok/s "
-        "(client-observed; includes queue/network)",
-        f"effective decode: p5={_fmt((result['effective_decode_tps']).get('p5'))} "
-        f"p50={_fmt((result['effective_decode_tps']).get('p50'))} tok/s",
         f"server prefill: p5={_fmt((result['server_prefill_tps']).get('p5'))} "
         f"p50={_fmt((result['server_prefill_tps']).get('p50'))} tok/s",
         f"server decode: p5={_fmt((result['server_decode_tps']).get('p5'))} "
@@ -746,9 +755,42 @@ def render_confirmation(result: dict[str, Any]) -> str:
     provider_decode = (result.get("provider_effective_decode_tps") or {}).get("p50")
     if provider_decode is not None:
         lines.append(f"provider-effective decode p50: {_fmt(provider_decode)} tok/s")
+    metric_status = result.get("server_metric_status")
+    if isinstance(metric_status, dict) and not metric_status.get("available"):
+        lines.append(f"server metrics: unavailable for this route — {metric_status.get('reason')}")
     if result.get("p99_sample_warning"):
         lines.append("NOTE: p99 has <100 request samples; use --samples 100+ for stronger tail-latency evidence.")
     return "\n".join(lines)
+
+
+def server_metric_status(result: dict[str, Any], server_props: dict[str, Any]) -> dict[str, Any]:
+    native_fields = (
+        "server_prefill_tps",
+        "server_decode_tps",
+        "provider_ttft",
+        "provider_queue",
+        "provider_mean_itl",
+        "provider_effective_prefill_tps",
+        "provider_effective_decode_tps",
+    )
+    available = [
+        name for name in native_fields
+        if isinstance(result.get(name), dict) and result[name].get("n", 0) > 0
+    ]
+    if available:
+        return {"available": True, "fields": available, "reason": None}
+
+    props_error = server_props.get("props_error") if isinstance(server_props, dict) else None
+    source = server_props.get("source") if isinstance(server_props, dict) else None
+    if source == "openai_models" and not server_props.get("llama_cpp_props"):
+        reason = "the route exposes /v1/models but no llama.cpp /props and returned no per-request provider timing metrics"
+    elif source == "unavailable":
+        reason = "server identity/timing endpoints were unavailable and streamed responses returned no native timing metrics"
+    elif props_error:
+        reason = "native /props timing metadata was unavailable and streamed responses returned no provider timing metrics"
+    else:
+        reason = "streamed responses did not include native server/provider timing fields"
+    return {"available": False, "fields": [], "reason": reason}
 
 
 def _fmt(value: Any) -> str:
