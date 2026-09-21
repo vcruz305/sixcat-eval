@@ -1,3 +1,53 @@
+# SixCat 0.7.0 — adaptive concurrency and speed telemetry
+
+0.7.0 extends SixCat's "finish useful work quickly" philosophy to the serving layer. Standard scoring remains 120 difficult items, but an optional unscored calibration phase can now discover the throughput knee of an already-running inference server before the benchmark starts.
+
+## Auto-concurrency
+
+- New `--auto-concurrency` mode for normal scored runs.
+- Default curve: concurrency 1, 2, 4, 8.
+- Synthetic unscored prompts are used, with unique leading markers to avoid warming the actual benchmark questions or creating a large shared prefix-cache advantage.
+- Selection method: choose the smallest concurrency reaching at least 90% of measured peak aggregate output throughput.
+- Falls back to request throughput when streaming token usage is unavailable.
+- Rejects concurrency levels with poor request-success rates.
+- Calibration shares the same invocation deadline as the 30-minute benchmark.
+- Curve, peak, recommendation, selection metric and confidence are stored in the final scored result.
+
+## New `sixcat speed` command
+
+- Standalone serving-speed benchmark with no quality scoring.
+- Can discover a curve automatically or confirm a fixed `--concurrency N`.
+- Streaming measurement of client-observed TTFT.
+- TTFT, end-to-end latency and TPOT p50/p95/p99.
+- Aggregate output tokens/second and requests/second.
+- Effective client-observed prefill and decode rates.
+- Native server prefill/decode timing when exposed.
+- Provider TTFT, queue latency and ITL when exposed.
+- JSON output for automation and release receipts.
+- p99 is explicitly flagged as low-sample when fewer than 100 confirmation requests are used.
+- One compatibility fallback handles OpenAI-compatible servers that stream but do not support `stream_options.include_usage`.
+
+## Measurement semantics
+
+- Client TTFT includes client/network transport, scheduler queueing and prefill.
+- `effective_prefill_tps` is intentionally not mislabeled as pure model prefill throughput.
+- Provider/server timing fields remain separate from client-observed measurements.
+- Effective decode TPS is computed after the first streamed output token when completion token usage is available.
+- The curve is designed to identify the throughput knee, not to claim that larger concurrency always means faster serving.
+
+## Why the knee instead of peak
+
+For a throughput-oriented 120-question evaluation, the absolute highest measured concurrency may only add a few percent throughput while significantly worsening TTFT, memory/KV pressure, and per-request latency. Choosing the smallest level within 90% of peak is a stable default; operators can change `--calibration-knee-fraction` or the candidate list explicitly.
+
+## Compatibility
+
+- Existing explicit `--concurrency N` behavior remains unchanged.
+- `--auto-concurrency` is OpenAI-compatible HTTP only; stdio stays serial.
+- The calibration phase never changes or restarts the inference server. It only changes the number of simultaneous client requests.
+- v0.6 result files remain readable.
+
+---
+
 # SixCat 0.6.0 — fast, time-bounded, first-response evaluation
 
 The standard benchmark is still 120 items, 20 per category. No larger default suite, mandatory model download, LLM judge, or always-on repeated run was added. Full mode selects 884 items and remains optional.
