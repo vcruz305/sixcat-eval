@@ -95,6 +95,7 @@ jobs:
           /tmp/sixcat-wheel/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/sixcat-wheel/bin/python -m sixcat --help
+          /tmp/sixcat-wheel/bin/python -m sixcat speed --help
           /tmp/sixcat-wheel/bin/python -c "from sixcat.dataio import read_jsonl; assert len(read_jsonl('humaneval.jsonl')) == 164; from sixcat.manifest import expected_counts; assert sum(expected_counts(20).values()) == 120; assert sum(expected_counts(None).values()) == 884"
       - name: Archive exact tested sources
         if: always()
