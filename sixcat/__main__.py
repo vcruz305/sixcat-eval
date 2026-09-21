@@ -313,6 +313,15 @@ def _run_main(argv: list[str]) -> int:
             p.error(f"--retry requires an existing journal at {log_path}")
     completed_results: dict[str, dict] = {}
     invocation_budget = TimeBudget(seconds=seconds)
+    calibration_cache: dict[tuple, dict] = {}
+    if args.auto_concurrency:
+        from .perf import parse_candidates
+        try:
+            auto_candidates = parse_candidates(args.concurrency_candidates)
+        except ValueError as exc:
+            p.error(str(exc))
+    else:
+        auto_candidates = [args.concurrency]
     for policy_name in policy_names:
         out_path, log_path = run_paths[policy_name]
         if args.policy == "both":
@@ -351,6 +360,41 @@ def _run_main(argv: list[str]) -> int:
             client.server_props = fetch_server_props(args.base_url, args.api_key) if args.transport == "openai" else {"source": "stdio"}
         client.server_identity = observed_server_identity(client.server_props, args.model)
         client.artifact_id = args.artifact_id
+        performance_calibration = None
+        effective_concurrency = args.concurrency
+        if args.auto_concurrency:
+            from .perf import discover_concurrency, render_curve
+            cache_key = (
+                args.model,
+                bool(policy.thinking),
+                tuple(auto_candidates),
+                args.calibration_prompt_words,
+                args.calibration_max_tokens,
+                args.calibration_knee_fraction,
+            )
+            if cache_key not in calibration_cache:
+                remaining = invocation_budget.remaining()
+                calibration_seconds = args.calibration_seconds
+                if remaining is not None:
+                    calibration_seconds = min(calibration_seconds, remaining)
+                if calibration_seconds <= 0:
+                    p.error("the invocation deadline expired before auto-concurrency calibration")
+                try:
+                    calibration_cache[cache_key] = discover_concurrency(
+                        client,
+                        candidates=auto_candidates,
+                        max_seconds=calibration_seconds,
+                        prompt_words=args.calibration_prompt_words,
+                        max_tokens=args.calibration_max_tokens,
+                        knee_fraction=args.calibration_knee_fraction,
+                        outer_deadline=invocation_budget.deadline,
+                    )
+                except (ValueError, TimeoutError) as exc:
+                    p.error(f"auto-concurrency calibration failed: {exc}")
+                print(render_curve(calibration_cache[cache_key]), flush=True)
+            performance_calibration = copy.deepcopy(calibration_cache[cache_key])
+            effective_concurrency = int(performance_calibration["recommended_concurrency"])
+        client.performance_calibration = performance_calibration
         identity = _journal_identity(
             model=args.model,
             base_url=args.base_url,
@@ -375,10 +419,10 @@ def _run_main(argv: list[str]) -> int:
             retry_failed=args.retry in {"failed", "incomplete"},
             include_remaining=args.retry != "failed",
             retry_mode=args.retry,
-            concurrency=args.concurrency,
+            concurrency=effective_concurrency,
         )
         print(
-            f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={args.concurrency}",
+            f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={effective_concurrency}",
             flush=True,
         )
         try:
