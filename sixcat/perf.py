@@ -488,10 +488,24 @@ def run_level(
     )
 
 
-def recommend_concurrency(levels: list[dict[str, Any]], *, knee_fraction: float = 0.90) -> dict[str, Any]:
-    valid = [level for level in levels if level.get("succeeded", 0) >= 1 and level.get("success_rate", 0) >= 0.95]
+def recommend_concurrency(
+    levels: list[dict[str, Any]],
+    *,
+    knee_fraction: float = 0.90,
+    min_success_rate: float = 0.95,
+) -> dict[str, Any]:
+    if not 0 < min_success_rate <= 1:
+        raise ValueError("minimum success rate must be in (0, 1]")
+    for level in levels:
+        level["usable"] = bool(
+            level.get("succeeded", 0) >= 1
+            and level.get("success_rate", 0) >= min_success_rate
+        )
+    valid = [level for level in levels if level["usable"]]
     if not valid:
-        raise ValueError("no concurrency level completed with at least 95% request success")
+        raise ValueError(
+            f"no concurrency level completed with at least {min_success_rate:.0%} request success"
+        )
 
     metric_name = "aggregate_output_tps"
     metric_values = [level.get(metric_name) for level in valid]
@@ -517,8 +531,15 @@ def recommend_concurrency(levels: list[dict[str, Any]], *, knee_fraction: float 
     if sum(level.get("succeeded", 0) for level in valid) < 12:
         confidence = "low"
 
+    max_usable_concurrency = max(int(level["concurrency"]) for level in valid)
+    rejected_concurrency = [
+        int(level["concurrency"]) for level in levels if not level.get("usable")
+    ]
     return {
         "method": CURVE_METHOD,
+        "min_success_rate": min_success_rate,
+        "max_usable_concurrency": max_usable_concurrency,
+        "rejected_concurrency": rejected_concurrency,
         "selection_metric": metric_name,
         "knee_fraction": knee_fraction,
         "peak_concurrency": peak_concurrency,
@@ -544,6 +565,7 @@ def discover_concurrency(
     requests_per_worker: int = 2,
     min_requests: int = 4,
     knee_fraction: float = 0.90,
+    min_success_rate: float = 0.95,
     outer_deadline: float | None = None,
 ) -> dict[str, Any]:
     candidates = parse_candidates(candidates)
@@ -590,7 +612,11 @@ def discover_concurrency(
         )
         levels.append(level)
 
-    recommendation = recommend_concurrency(levels, knee_fraction=knee_fraction)
+    recommendation = recommend_concurrency(
+        levels,
+        knee_fraction=knee_fraction,
+        min_success_rate=min_success_rate,
+    )
     return {
         "schema": "sixcat-concurrency-curve-v1",
         "unscored": True,
