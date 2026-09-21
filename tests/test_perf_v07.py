@@ -17,6 +17,8 @@ from sixcat.perf import (
     main as speed_main,
     parse_candidates,
     recommend_concurrency,
+    resolve_workloads,
+    server_metric_status,
 )
 from sixcat.policy import strict_policy
 
@@ -241,6 +243,7 @@ def test_speed_cli_fixed_concurrency_writes_json(tmp_path):
             "--base-url", url,
             "--model", "fixture",
             "--concurrency", "2",
+            "--profile", "custom",
             "--samples", "6",
             "--prompt-words", "64",
             "--max-tokens", "32",
@@ -249,7 +252,7 @@ def test_speed_cli_fixed_concurrency_writes_json(tmp_path):
         ])
     assert rc == 0
     report = json.loads(output.read_text())
-    assert report["schema"] == "sixcat-speed-v1"
+    assert report["schema"] == "sixcat-speed-v2"
     assert report["selected_concurrency"] == 2
     assert report["curve"] is None
     assert report["confirmation"]["ttft"]["p95"] > 0
@@ -282,3 +285,102 @@ def test_scored_run_auto_concurrency_records_curve_and_selected_level(tmp_path):
     assert result["concurrency"] == result["performance_calibration"]["recommended_concurrency"]
     assert result["performance_calibration"]["measured_levels"] == [1, 2]
     assert result["n"] == {"knowledge": 1, "math": 1, "truth": 1, "instruct": 1, "code": 0, "tools": 1}
+
+
+
+def test_default_workload_profiles_are_distinct_and_purpose_built():
+    workloads = {item["name"]: item for item in resolve_workloads("all")}
+    assert set(workloads) == {"decode", "balanced", "prefill"}
+    assert workloads["decode"]["prompt_words"] == 32
+    assert workloads["decode"]["max_tokens"] == 512
+    assert workloads["balanced"]["prompt_words"] == 256
+    assert workloads["balanced"]["max_tokens"] == 128
+    assert workloads["prefill"]["prompt_words"] == 2048
+    assert workloads["prefill"]["max_tokens"] == 32
+
+
+def test_knee_rejects_failed_levels_and_reports_max_usable_concurrency():
+    levels = [
+        {"concurrency": 1, "succeeded": 4, "requested": 4, "success_rate": 1.0,
+         "aggregate_output_tps": 40.0, "request_rps": 1.0},
+        {"concurrency": 2, "succeeded": 4, "requested": 4, "success_rate": 1.0,
+         "aggregate_output_tps": 75.0, "request_rps": 2.0},
+        {"concurrency": 4, "succeeded": 8, "requested": 8, "success_rate": 1.0,
+         "aggregate_output_tps": 100.0, "request_rps": 3.0},
+        {"concurrency": 8, "succeeded": 2, "requested": 16, "success_rate": 0.125,
+         "aggregate_output_tps": 110.0, "request_rps": 0.2},
+    ]
+    result = recommend_concurrency(levels, min_success_rate=.95)
+    assert result["peak_concurrency"] == 4
+    assert result["recommended_concurrency"] == 4
+    assert result["max_usable_concurrency"] == 4
+    assert result["rejected_concurrency"] == [8]
+    assert levels[-1]["usable"] is False
+
+
+def test_curve_and_confirmation_use_same_requested_workload():
+    calls = []
+    def fake_level(client, **kwargs):
+        calls.append(kwargs)
+        c = kwargs["concurrency"]
+        return {
+            "concurrency": c, "requested": 4, "succeeded": 4, "failed": 0,
+            "success_rate": 1.0, "elapsed_s": 1.0, "request_rps": 4.0,
+            "aggregate_output_tps": 100.0,
+        }
+    client = ChatClient("http://127.0.0.1:1/v1", "fixture", strict_policy(), timeout=5)
+    with patch("sixcat.perf.run_level", side_effect=fake_level):
+        curve = discover_concurrency(
+            client,
+            candidates=[1, 2],
+            max_seconds=10,
+            prompt_words=32,
+            max_tokens=512,
+        )
+    measured = [call for call in calls if str(call.get("phase", "")).startswith("curve-")]
+    assert measured
+    assert all(call["prompt_words"] == 32 for call in measured)
+    assert all(call["max_tokens"] == 512 for call in measured)
+    assert curve["prompt_words"] == 32
+    assert curve["max_tokens"] == 512
+
+
+def test_server_metric_status_explains_unavailable_route():
+    result = {
+        name: {"n": 0}
+        for name in (
+            "server_prefill_tps", "server_decode_tps", "provider_ttft",
+            "provider_queue", "provider_mean_itl",
+            "provider_effective_prefill_tps", "provider_effective_decode_tps",
+        )
+    }
+    status = server_metric_status(
+        result,
+        {"source": "openai_models", "llama_cpp_props": None, "props_error": "404"},
+    )
+    assert status["available"] is False
+    assert "no llama.cpp /props" in status["reason"]
+
+
+def test_one_command_runs_decode_balanced_and_prefill_suite(tmp_path):
+    output = tmp_path / "suite.json"
+    with streaming_endpoint() as (url, _):
+        rc = speed_main([
+            "--base-url", url,
+            "--model", "fixture",
+            "--concurrency", "2",
+            "--samples", "2",
+            "--max-seconds", "20",
+            "--out", str(output),
+        ])
+    assert rc == 0
+    report = json.loads(output.read_text())
+    assert report["schema"] == "sixcat-speed-v2"
+    assert report["requested_profile"] == "all"
+    assert set(report["profiles"]) == {"decode", "balanced", "prefill"}
+    assert report["profiles"]["decode"]["workload"]["max_tokens"] == 512
+    assert report["profiles"]["balanced"]["workload"]["max_tokens"] == 128
+    assert report["profiles"]["prefill"]["workload"]["prompt_words"] == 2048
+    for profile in report["profiles"].values():
+        assert profile["selected_concurrency"] == 2
+        assert profile["confirmation"]["effective_decode_tps"]["p90"] is not None

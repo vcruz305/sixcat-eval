@@ -25,13 +25,33 @@ from .journal import TimeBudget
 from .policy import custom_policy, override_thinking, resolve_policy
 from .storage import atomic_write_json
 
-SPEED_SCHEMA = "sixcat-speed-v1"
+SPEED_SCHEMA = "sixcat-speed-v2"
 CURVE_METHOD = "smallest-concurrency-within-90pct-peak-v1"
 DEFAULT_CANDIDATES = (1, 2, 4, 8)
-DEFAULT_PROMPT_WORDS = 256
-DEFAULT_MAX_TOKENS = 96
 DEFAULT_CURVE_SECONDS = 60.0
 DEFAULT_CONFIRM_SAMPLES = 32
+DEFAULT_SPEED_PROFILES = ("decode", "balanced", "prefill")
+WORKLOAD_PROFILES: dict[str, dict[str, Any]] = {
+    "decode": {
+        "prompt_words": 32,
+        "max_tokens": 512,
+        "purpose": "short prompt + long generation to expose sustained decode speed",
+    },
+    "balanced": {
+        "prompt_words": 256,
+        "max_tokens": 128,
+        "purpose": "mixed prompt/generation workload for realistic serving throughput",
+    },
+    "prefill": {
+        "prompt_words": 2048,
+        "max_tokens": 32,
+        "purpose": "long prompt + short generation to expose prompt-ingestion speed",
+    },
+}
+
+# Backward-compatible library defaults map to the Balanced workload.
+DEFAULT_PROMPT_WORDS = int(WORKLOAD_PROFILES["balanced"]["prompt_words"])
+DEFAULT_MAX_TOKENS = int(WORKLOAD_PROFILES["balanced"]["max_tokens"])
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -50,17 +70,45 @@ def _percentile(values: list[float], pct: float) -> float | None:
 def _distribution(values: list[float]) -> dict[str, Any]:
     clean = [float(value) for value in values if math.isfinite(float(value))]
     if not clean:
-        return {"n": 0, "min": None, "p5": None, "p50": None, "p95": None, "p99": None, "max": None, "mean": None}
+        return {"n": 0, "min": None, "p5": None, "p50": None, "p90": None, "p95": None, "p99": None, "max": None, "mean": None}
     return {
         "n": len(clean),
         "min": min(clean),
         "p5": _percentile(clean, 0.05),
         "p50": _percentile(clean, 0.50),
+        "p90": _percentile(clean, 0.90),
         "p95": _percentile(clean, 0.95),
         "p99": _percentile(clean, 0.99),
         "max": max(clean),
         "mean": statistics.fmean(clean),
     }
+
+
+def resolve_workloads(
+    profile: str,
+    *,
+    prompt_words: int | None = None,
+    max_tokens: int | None = None,
+) -> list[dict[str, Any]]:
+    if profile == "all":
+        return [{"name": name, **WORKLOAD_PROFILES[name]} for name in DEFAULT_SPEED_PROFILES]
+    if profile == "custom":
+        if prompt_words is None or max_tokens is None:
+            raise ValueError("--profile custom requires --prompt-words and --max-tokens")
+        return [{
+            "name": "custom",
+            "prompt_words": prompt_words,
+            "max_tokens": max_tokens,
+            "purpose": "operator-defined custom serving workload",
+        }]
+    if profile not in WORKLOAD_PROFILES:
+        raise ValueError(f"unknown speed profile {profile!r}")
+    workload = {"name": profile, **WORKLOAD_PROFILES[profile]}
+    if prompt_words is not None:
+        workload["prompt_words"] = prompt_words
+    if max_tokens is not None:
+        workload["max_tokens"] = max_tokens
+    return [workload]
 
 
 def parse_candidates(value: str | list[int] | tuple[int, ...]) -> list[int]:
@@ -444,10 +492,24 @@ def run_level(
     )
 
 
-def recommend_concurrency(levels: list[dict[str, Any]], *, knee_fraction: float = 0.90) -> dict[str, Any]:
-    valid = [level for level in levels if level.get("succeeded", 0) >= 1 and level.get("success_rate", 0) >= 0.95]
+def recommend_concurrency(
+    levels: list[dict[str, Any]],
+    *,
+    knee_fraction: float = 0.90,
+    min_success_rate: float = 0.95,
+) -> dict[str, Any]:
+    if not 0 < min_success_rate <= 1:
+        raise ValueError("minimum success rate must be in (0, 1]")
+    for level in levels:
+        level["usable"] = bool(
+            level.get("succeeded", 0) >= 1
+            and level.get("success_rate", 0) >= min_success_rate
+        )
+    valid = [level for level in levels if level["usable"]]
     if not valid:
-        raise ValueError("no concurrency level completed with at least 95% request success")
+        raise ValueError(
+            f"no concurrency level completed with at least {min_success_rate:.0%} request success"
+        )
 
     metric_name = "aggregate_output_tps"
     metric_values = [level.get(metric_name) for level in valid]
@@ -473,8 +535,15 @@ def recommend_concurrency(levels: list[dict[str, Any]], *, knee_fraction: float 
     if sum(level.get("succeeded", 0) for level in valid) < 12:
         confidence = "low"
 
+    max_usable_concurrency = max(int(level["concurrency"]) for level in valid)
+    rejected_concurrency = [
+        int(level["concurrency"]) for level in levels if not level.get("usable")
+    ]
     return {
         "method": CURVE_METHOD,
+        "min_success_rate": min_success_rate,
+        "max_usable_concurrency": max_usable_concurrency,
+        "rejected_concurrency": rejected_concurrency,
         "selection_metric": metric_name,
         "knee_fraction": knee_fraction,
         "peak_concurrency": peak_concurrency,
@@ -500,6 +569,7 @@ def discover_concurrency(
     requests_per_worker: int = 2,
     min_requests: int = 4,
     knee_fraction: float = 0.90,
+    min_success_rate: float = 0.95,
     outer_deadline: float | None = None,
 ) -> dict[str, Any]:
     candidates = parse_candidates(candidates)
@@ -546,7 +616,11 @@ def discover_concurrency(
         )
         levels.append(level)
 
-    recommendation = recommend_concurrency(levels, knee_fraction=knee_fraction)
+    recommendation = recommend_concurrency(
+        levels,
+        knee_fraction=knee_fraction,
+        min_success_rate=min_success_rate,
+    )
     return {
         "schema": "sixcat-concurrency-curve-v1",
         "unscored": True,
@@ -602,7 +676,7 @@ def confirmation_run(
     result["p99_note"] = (
         "p99 is an interpolated empirical percentile with fewer than 100 successful requests; "
         "use --samples 100 or more for a more meaningful tail estimate"
-        if samples < 100
+        if result["succeeded"] < 100
         else None
     )
     return result
@@ -611,40 +685,54 @@ def confirmation_run(
 def render_curve(curve: dict[str, Any]) -> str:
     lines = [
         "CONCURRENCY CURVE (unscored synthetic probes)",
-        f"{'C':>4} {'ok':>7} {'out t/s':>10} {'req/s':>9} {'TTFT p95':>10} {'E2E p95':>10} {'dec p50':>10}",
-        "-" * 72,
+        f"{'C':>4} {'ok':>7} {'usable':>7} {'agg t/s':>10} {'req/s':>9} {'TTFT p95':>10} {'dec p50':>10}",
+        "-" * 76,
     ]
     for level in curve.get("levels") or []:
         ttft = (level.get("ttft") or {}).get("p95")
-        e2e = (level.get("e2e") or {}).get("p95")
         decode = (level.get("effective_decode_tps") or {}).get("p50")
         lines.append(
             f"{level['concurrency']:>4} "
             f"{level['succeeded']}/{level['requested']:<5} "
+            f"{('yes' if level.get('usable') else 'NO'):>7} "
             f"{_fmt(level.get('aggregate_output_tps')):>10} "
             f"{_fmt(level.get('request_rps')):>9} "
             f"{_fmt_ms(ttft):>10} "
-            f"{_fmt_ms(e2e):>10} "
             f"{_fmt(decode):>10}"
         )
     lines.extend(
         [
-            "-" * 72,
+            "-" * 76,
+            "aggregate output tps = level-wall throughput; includes prefill, queueing, and failure wall time",
+            f"max usable concurrency: {curve.get('max_usable_concurrency')} "
+            f"(min success={float(curve.get('min_success_rate', 0.95)):.0%})",
             f"recommended concurrency: {curve.get('recommended_concurrency')} "
-            f"(peak={curve.get('peak_concurrency')}, confidence={curve.get('confidence')})",
+            f"(usable peak={curve.get('peak_concurrency')}, confidence={curve.get('confidence')})",
             f"selection: {curve.get('reason')}",
         ]
     )
+    rejected = curve.get("rejected_concurrency") or []
+    if rejected:
+        lines.append("excluded from knee for failures: " + ", ".join(f"C={value}" for value in rejected))
     return "\n".join(lines)
 
 
 def render_confirmation(result: dict[str, Any]) -> str:
+    decode = result.get("effective_decode_tps") or {}
+    prefill = result.get("effective_prefill_tps") or {}
     lines = [
         "",
         f"SPEED CONFIRMATION @ concurrency={result['concurrency']} "
         f"({result['succeeded']}/{result['requested']} successful)",
-        f"aggregate output throughput: {_fmt(result.get('aggregate_output_tps'))} tok/s",
+        f"aggregate output tps (includes prefill/queue): {_fmt(result.get('aggregate_output_tps'))} tok/s",
         f"request rate: {_fmt(result.get('request_rps'))} req/s",
+        "DECODE — per-stream sustained generation:",
+        f"  p50={_fmt(decode.get('p50'))}  p95={_fmt(decode.get('p95'))}  "
+        f"max={_fmt(decode.get('max'))} tok/s",
+        f"  best-sustained decode (p90): {_fmt(decode.get('p90'))} tok/s",
+        "PREFILL — client-observed effective prompt ingestion:",
+        f"  p50={_fmt(prefill.get('p50'))}  p95={_fmt(prefill.get('p95'))}  "
+        f"max={_fmt(prefill.get('max'))} tok/s (includes network/queue)",
         f"client TTFT: p50={_fmt_ms((result['ttft']).get('p50'))} "
         f"p95={_fmt_ms((result['ttft']).get('p95'))} "
         f"p99={_fmt_ms((result['ttft']).get('p99'))}",
@@ -654,11 +742,6 @@ def render_confirmation(result: dict[str, Any]) -> str:
         f"TPOT: p50={_fmt_ms((result['tpot']).get('p50'))} "
         f"p95={_fmt_ms((result['tpot']).get('p95'))} "
         f"p99={_fmt_ms((result['tpot']).get('p99'))}",
-        f"effective prefill: p5={_fmt((result['effective_prefill_tps']).get('p5'))} "
-        f"p50={_fmt((result['effective_prefill_tps']).get('p50'))} tok/s "
-        "(client-observed; includes queue/network)",
-        f"effective decode: p5={_fmt((result['effective_decode_tps']).get('p5'))} "
-        f"p50={_fmt((result['effective_decode_tps']).get('p50'))} tok/s",
         f"server prefill: p5={_fmt((result['server_prefill_tps']).get('p5'))} "
         f"p50={_fmt((result['server_prefill_tps']).get('p50'))} tok/s",
         f"server decode: p5={_fmt((result['server_decode_tps']).get('p5'))} "
@@ -676,9 +759,42 @@ def render_confirmation(result: dict[str, Any]) -> str:
     provider_decode = (result.get("provider_effective_decode_tps") or {}).get("p50")
     if provider_decode is not None:
         lines.append(f"provider-effective decode p50: {_fmt(provider_decode)} tok/s")
+    metric_status = result.get("server_metric_status")
+    if isinstance(metric_status, dict) and not metric_status.get("available"):
+        lines.append(f"server metrics: unavailable for this route — {metric_status.get('reason')}")
     if result.get("p99_sample_warning"):
         lines.append("NOTE: p99 has <100 request samples; use --samples 100+ for stronger tail-latency evidence.")
     return "\n".join(lines)
+
+
+def server_metric_status(result: dict[str, Any], server_props: dict[str, Any]) -> dict[str, Any]:
+    native_fields = (
+        "server_prefill_tps",
+        "server_decode_tps",
+        "provider_ttft",
+        "provider_queue",
+        "provider_mean_itl",
+        "provider_effective_prefill_tps",
+        "provider_effective_decode_tps",
+    )
+    available = [
+        name for name in native_fields
+        if isinstance(result.get(name), dict) and result[name].get("n", 0) > 0
+    ]
+    if available:
+        return {"available": True, "fields": available, "reason": None}
+
+    props_error = server_props.get("props_error") if isinstance(server_props, dict) else None
+    source = server_props.get("source") if isinstance(server_props, dict) else None
+    if source == "openai_models" and not server_props.get("llama_cpp_props"):
+        reason = "the route exposes /v1/models but no llama.cpp /props and returned no per-request provider timing metrics"
+    elif source == "unavailable":
+        reason = "server identity/timing endpoints were unavailable and streamed responses returned no native timing metrics"
+    elif props_error:
+        reason = "native /props timing metadata was unavailable and streamed responses returned no provider timing metrics"
+    else:
+        reason = "streamed responses did not include native server/provider timing fields"
+    return {"available": False, "fields": [], "reason": reason}
 
 
 def _fmt(value: Any) -> str:
@@ -713,10 +829,86 @@ def _resolve_cli_policy(args) -> Any:
     return policy
 
 
+def _profile_level(profile: dict[str, Any], concurrency: int) -> dict[str, Any] | None:
+    curve = profile.get("curve") or {}
+    for level in curve.get("levels") or []:
+        if int(level.get("concurrency", -1)) == concurrency:
+            return level
+    return None
+
+
+def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
+    lines = [
+        "",
+        "SIXCAT SPEED SUITE — workload-specific headlines",
+        "-" * 76,
+    ]
+    decode = profiles.get("decode")
+    if decode:
+        # Single-stream C=1 is the honest headline for maximum per-stream decode.
+        c1 = _profile_level(decode, 1)
+        source = c1 or decode["confirmation"]
+        source_label = "single-stream C=1" if c1 is not None else f"C={decode['selected_concurrency']}"
+        dist = source.get("effective_decode_tps") or {}
+        lines.append(
+            f"DECODE ({source_label}): "
+            f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
+            f"max={_fmt(dist.get('max'))} best-sustained(p90)={_fmt(dist.get('p90'))} tok/s"
+        )
+        confirm = decode["confirmation"]
+        lines.append(
+            "DECODE serving knee: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"@ C={decode['selected_concurrency']} (includes prefill/queue)"
+        )
+    balanced = profiles.get("balanced")
+    if balanced:
+        confirm = balanced["confirmation"]
+        lines.append(
+            "BALANCED: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"(includes prefill/queue), TTFT p95={_fmt_ms((confirm.get('ttft') or {}).get('p95'))} "
+            f"@ C={balanced['selected_concurrency']}"
+        )
+    prefill = profiles.get("prefill")
+    if prefill:
+        # Use C=1 for the single-request prompt-ingestion headline; the selected
+        # concurrency remains available separately in the profile receipt.
+        c1 = _profile_level(prefill, 1)
+        source = c1 or prefill["confirmation"]
+        source_label = "single-stream C=1" if c1 is not None else f"C={prefill['selected_concurrency']}"
+        dist = source.get("effective_prefill_tps") or {}
+        lines.append(
+            f"PREFILL ({source_label}): "
+            f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
+            f"max={_fmt(dist.get('max'))} effective tok/s"
+        )
+        confirm = prefill["confirmation"]
+        lines.append(
+            "PREFILL serving knee: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"@ C={prefill['selected_concurrency']} (includes decode/queue)"
+        )
+    custom = profiles.get("custom")
+    if custom:
+        confirm = custom["confirmation"]
+        lines.append(
+            "CUSTOM: "
+            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
+            f"@ C={custom['selected_concurrency']}"
+        )
+    lines.append("-" * 76)
+    lines.append("Decode, balanced, and prefill are intentionally separate workloads; do not compare their aggregate TPS as the same metric.")
+    return "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="sixcat speed",
-        description="Measure serving speed/latency and optionally discover the concurrency throughput knee.",
+        description=(
+            "Run workload-specific serving benchmarks. Default runs decode, balanced, "
+            "and prefill profiles; each profile discovers its own concurrency knee."
+        ),
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
     parser.add_argument("--model", required=True)
@@ -729,17 +921,47 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--min-p", type=float, default=None)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--thinking", choices=("on", "off"), default="off")
-    parser.add_argument("--concurrency", type=int, default=None, help="Skip curve discovery and confirm this fixed concurrency.")
+    parser.add_argument(
+        "--profile",
+        choices=("all", "decode", "balanced", "prefill", "custom"),
+        default="all",
+        help=(
+            "Speed workload. Default all runs decode + balanced + prefill. "
+            "decode=short prompt/long output; prefill=long prompt/short output."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="Skip per-profile curve discovery and confirm this fixed concurrency.",
+    )
     parser.add_argument("--candidates", default="1,2,4,8")
-    parser.add_argument("--curve-seconds", type=float, default=60.0)
+    parser.add_argument("--curve-seconds", type=float, default=120.0)
     parser.add_argument("--curve-requests-per-worker", type=int, default=2)
     parser.add_argument("--curve-min-requests", type=int, default=4)
     parser.add_argument("--knee-fraction", type=float, default=0.90)
+    parser.add_argument("--min-success-rate", type=float, default=0.95)
     parser.add_argument("--samples", type=int, default=DEFAULT_CONFIRM_SAMPLES)
-    parser.add_argument("--prompt-words", type=int, default=DEFAULT_PROMPT_WORDS)
-    parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
-    parser.add_argument("--max-seconds", type=float, default=180.0)
-    parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--prompt-words",
+        type=int,
+        default=None,
+        help="Override prompt size for one named profile, or required with --profile custom.",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Override output length for one named profile, or required with --profile custom.",
+    )
+    parser.add_argument(
+        "--max-seconds",
+        type=float,
+        default=600.0,
+        help="Shared total speed-suite budget. Default 600 seconds for the three-profile suite.",
+    )
+    parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -749,10 +971,18 @@ def main(argv: list[str]) -> int:
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f"--{name.replace('_', '-')} must be finite and positive")
-    if args.samples < 1 or args.prompt_words < 16 or args.max_tokens < 2:
-        parser.error("--samples must be >=1, --prompt-words >=16, and --max-tokens >=2")
+    if args.samples < 1:
+        parser.error("--samples must be >= 1")
+    if args.prompt_words is not None and args.prompt_words < 16:
+        parser.error("--prompt-words must be >= 16")
+    if args.max_tokens is not None and args.max_tokens < 2:
+        parser.error("--max-tokens must be >= 2")
     if not 0.5 <= args.knee_fraction <= 1.0:
         parser.error("--knee-fraction must be between 0.5 and 1.0")
+    if not 0 < args.min_success_rate <= 1.0:
+        parser.error("--min-success-rate must be in (0, 1]")
+    if args.profile == "all" and (args.prompt_words is not None or args.max_tokens is not None):
+        parser.error("--prompt-words/--max-tokens cannot override --profile all; select one profile or custom")
 
     custom_values = (args.temperature, args.top_p, args.top_k, args.min_p)
     if args.policy == "custom" and args.temperature is None:
@@ -761,9 +991,15 @@ def main(argv: list[str]) -> int:
         parser.error("--temperature/--top-p/--top-k/--min-p require --policy custom")
     if args.policy_family and args.policy != "vendor":
         parser.error("--policy-family requires --policy vendor")
+
     try:
         policy = _resolve_cli_policy(args)
         candidates = parse_candidates(args.candidates) if args.concurrency is None else [args.concurrency]
+        workloads = resolve_workloads(
+            args.profile,
+            prompt_words=args.prompt_words,
+            max_tokens=args.max_tokens,
+        )
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -776,49 +1012,99 @@ def main(argv: list[str]) -> int:
     )
     server_props = fetch_server_props(args.base_url, args.api_key)
     total = TimeBudget(args.max_seconds)
-    curve = None
-    if args.concurrency is None:
-        curve = discover_concurrency(
-            client,
-            candidates=candidates,
-            max_seconds=min(args.curve_seconds, total.remaining() or args.curve_seconds),
-            prompt_words=args.prompt_words,
-            max_tokens=min(args.max_tokens, 64),
-            requests_per_worker=args.curve_requests_per_worker,
-            min_requests=args.curve_min_requests,
-            knee_fraction=args.knee_fraction,
-            outer_deadline=total.deadline,
-        )
-        selected = int(curve["recommended_concurrency"])
-        print(render_curve(curve))
-    else:
-        selected = args.concurrency
+    profiles: dict[str, dict[str, Any]] = {}
+    exit_code = 0
 
-    if total.expired():
-        parser.error("speed curve consumed the total speed-test budget before confirmation")
-    confirmation = confirmation_run(
-        client,
-        concurrency=selected,
-        samples=args.samples,
-        prompt_words=args.prompt_words,
-        max_tokens=args.max_tokens,
-        deadline=total.deadline,
-    )
-    print(render_confirmation(confirmation))
-    report = {
+    for workload in workloads:
+        name = str(workload["name"])
+        prompt_words = int(workload["prompt_words"])
+        max_tokens = int(workload["max_tokens"])
+        if total.expired():
+            parser.error(f"total speed-suite budget expired before profile {name}")
+
+        print(
+            f"\n=== {name.upper()} PROFILE ===\n"
+            f"workload: prompt_words={prompt_words} max_tokens={max_tokens}\n"
+            f"purpose: {workload['purpose']}",
+            flush=True,
+        )
+
+        curve = None
+        if args.concurrency is None:
+            remaining = total.remaining()
+            curve_seconds = args.curve_seconds if remaining is None else min(args.curve_seconds, remaining)
+            if curve_seconds <= 0:
+                parser.error(f"speed-suite budget expired before {name} concurrency curve")
+            try:
+                curve = discover_concurrency(
+                    client,
+                    candidates=candidates,
+                    max_seconds=curve_seconds,
+                    prompt_words=prompt_words,
+                    max_tokens=max_tokens,
+                    requests_per_worker=args.curve_requests_per_worker,
+                    min_requests=args.curve_min_requests,
+                    knee_fraction=args.knee_fraction,
+                    min_success_rate=args.min_success_rate,
+                    outer_deadline=total.deadline,
+                )
+            except (ValueError, TimeoutError) as exc:
+                parser.error(f"{name} concurrency discovery failed: {exc}")
+            selected = int(curve["recommended_concurrency"])
+            print(render_curve(curve))
+        else:
+            selected = int(args.concurrency)
+
+        if total.expired():
+            parser.error(f"speed-suite budget expired before {name} confirmation")
+        confirmation = confirmation_run(
+            client,
+            concurrency=selected,
+            samples=args.samples,
+            prompt_words=prompt_words,
+            max_tokens=max_tokens,
+            deadline=total.deadline,
+        )
+        confirmation["server_metric_status"] = server_metric_status(confirmation, server_props)
+        print(render_confirmation(confirmation))
+
+        profile_result = {
+            "workload": {
+                "profile": name,
+                "prompt_words": prompt_words,
+                "max_tokens": max_tokens,
+                "purpose": workload["purpose"],
+            },
+            "curve": curve,
+            "selected_concurrency": selected,
+            "confirmation": confirmation,
+            "server_metric_status": confirmation["server_metric_status"],
+        }
+        profiles[name] = profile_result
+        if confirmation["succeeded"] != confirmation["requested"]:
+            exit_code = 2
+
+    print(render_suite_summary(profiles))
+    report: dict[str, Any] = {
         "schema": SPEED_SCHEMA,
         "unscored": True,
         "model": args.model,
         "base_url": args.base_url.rstrip("/"),
+        "requested_profile": args.profile,
         "policy": policy.to_dict(),
         "policy_fingerprint": policy.fingerprint,
         "server_props": server_props,
-        "curve": curve,
-        "selected_concurrency": selected,
-        "confirmation": confirmation,
+        "profiles": profiles,
         "total_elapsed_s": time.monotonic() - total.start,
     }
+    if len(profiles) == 1:
+        only = next(iter(profiles.values()))
+        report["workload"] = only["workload"]
+        report["curve"] = only["curve"]
+        report["selected_concurrency"] = only["selected_concurrency"]
+        report["confirmation"] = only["confirmation"]
+
     if args.out:
         atomic_write_json(args.out, report)
         print(f"\nwrote {args.out}")
-    return 0 if confirmation["succeeded"] == confirmation["requested"] else 2
+    return exit_code

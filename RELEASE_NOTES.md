@@ -1,5 +1,19 @@
 # SixCat 0.7.0 — adaptive concurrency and speed telemetry
 
+### Workload-specific speed suite
+
+- `sixcat speed` with no profile now runs **decode + balanced + prefill** in one command.
+- Decode uses a short prompt and long generation; its headline is the **single-stream C=1** sustained decode distribution so concurrency batching cannot make the model look slower than its true per-stream generation capability.
+- Balanced uses a mixed workload and remains the primary concurrency-knee / realistic serving-throughput view.
+- Prefill uses a long prompt and short generation so prompt ingestion is not hidden behind a long decode tail.
+- Curve and confirmation use the **same workload** for each profile.
+- Added decode p50/p95/max and p90 best-sustained headline reporting.
+- Aggregate output throughput is explicitly labeled as including prefill, queueing and failure wall time.
+- Concurrency levels below the configurable success threshold are excluded from the knee and the report includes `max_usable_concurrency`.
+- Missing native server/provider timings now print an explicit "server metrics unavailable for this route" reason instead of unexplained nulls.
+- `--profile decode|balanced|prefill|custom|all` selects workloads; `all` is the default.
+- Custom prompt/output lengths remain available through `--profile custom --prompt-words N --max-tokens N`.
+
 0.7.0 extends SixCat's "finish useful work quickly" philosophy to the serving layer. Standard scoring remains 120 difficult items, but an optional unscored calibration phase can now discover the throughput knee of an already-running inference server before the benchmark starts.
 
 ## Auto-concurrency
