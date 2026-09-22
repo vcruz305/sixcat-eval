@@ -837,6 +837,115 @@ def _profile_level(profile: dict[str, Any], concurrency: int) -> dict[str, Any] 
     return None
 
 
+def _summary_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _fmt_copy_tps(value: Any) -> str:
+    value = _summary_number(value)
+    return "n/a" if value is None else f"{value:,.1f}"
+
+
+def _fmt_copy_ms(value_s: Any) -> str:
+    value_s = _summary_number(value_s)
+    return "n/a" if value_s is None else f"{value_s * 1000.0:,.0f}"
+
+
+def build_speed_summary(profiles: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Compact, copy-ready headline metrics derived from the full profile receipts."""
+    decode_profile = profiles.get("decode")
+    prefill_profile = profiles.get("prefill")
+    balanced_profile = profiles.get("balanced")
+
+    decode_source = None
+    decode_source_concurrency = None
+    if decode_profile:
+        decode_source = _profile_level(decode_profile, 1)
+        if decode_source is not None:
+            decode_source_concurrency = 1
+        else:
+            decode_source = decode_profile.get("confirmation")
+            decode_source_concurrency = decode_profile.get("selected_concurrency")
+    decode_dist = (decode_source or {}).get("effective_decode_tps") or {}
+
+    prefill_source = None
+    prefill_source_concurrency = None
+    if prefill_profile:
+        prefill_source = _profile_level(prefill_profile, 1)
+        if prefill_source is not None:
+            prefill_source_concurrency = 1
+        else:
+            prefill_source = prefill_profile.get("confirmation")
+            prefill_source_concurrency = prefill_profile.get("selected_concurrency")
+    prefill_dist = (prefill_source or {}).get("effective_prefill_tps") or {}
+
+    balanced_confirmation = (balanced_profile or {}).get("confirmation") or {}
+    balanced_curve = (balanced_profile or {}).get("curve") or {}
+    balanced_concurrency = (balanced_profile or {}).get("selected_concurrency")
+    ttft = balanced_confirmation.get("ttft") or {}
+
+    max_usable = balanced_curve.get("max_usable_concurrency")
+    max_usable_evidence = "measured-balanced-curve" if max_usable is not None else "not-measured"
+
+    summary = {
+        "schema": "sixcat-speed-summary-v1",
+        "decode": {
+            "source_concurrency": decode_source_concurrency,
+            "max_tps": _summary_number(decode_dist.get("max")),
+            "p50_tps": _summary_number(decode_dist.get("p50")),
+            "p95_tps": _summary_number(decode_dist.get("p95")),
+            "best_sustained_p90_tps": _summary_number(decode_dist.get("p90")),
+        },
+        "prefill": {
+            "source_concurrency": prefill_source_concurrency,
+            "p50_tps": _summary_number(prefill_dist.get("p50")),
+            "p95_tps": _summary_number(prefill_dist.get("p95")),
+            "max_tps": _summary_number(prefill_dist.get("max")),
+        },
+        "balanced_serving": {
+            "aggregate_output_tps": _summary_number(balanced_confirmation.get("aggregate_output_tps")),
+            "concurrency": balanced_concurrency,
+        },
+        "ttft": {
+            "profile": "balanced" if balanced_profile else None,
+            "p50_ms": (_summary_number(ttft.get("p50")) * 1000.0) if _summary_number(ttft.get("p50")) is not None else None,
+            "p95_ms": (_summary_number(ttft.get("p95")) * 1000.0) if _summary_number(ttft.get("p95")) is not None else None,
+            "p99_ms": (_summary_number(ttft.get("p99")) * 1000.0) if _summary_number(ttft.get("p99")) is not None else None,
+        },
+        "max_usable_concurrency": max_usable,
+        "max_usable_concurrency_evidence": max_usable_evidence,
+    }
+
+    lines = []
+    if decode_profile:
+        lines.append(
+            f"**Decode:** {_fmt_copy_tps(summary['decode']['max_tps'])} tok/s max, "
+            f"{_fmt_copy_tps(summary['decode']['p50_tps'])} tok/s p50"
+        )
+    if prefill_profile:
+        lines.append(
+            f"**Prefill:** {_fmt_copy_tps(summary['prefill']['p50_tps'])} tok/s p50"
+        )
+    if balanced_profile:
+        aggregate = _fmt_copy_tps(summary["balanced_serving"]["aggregate_output_tps"])
+        concurrency = summary["balanced_serving"]["concurrency"]
+        lines.append(
+            f"**Balanced serving:** {aggregate} tok/s aggregate @ C={concurrency if concurrency is not None else 'n/a'}"
+        )
+        lines.append(
+            f"**TTFT:** {_fmt_copy_ms(ttft.get('p50'))} ms p50 / "
+            f"{_fmt_copy_ms(ttft.get('p95'))} ms p95"
+        )
+        lines.append(
+            f"**Max usable concurrency:** {max_usable if max_usable is not None else 'n/a'}"
+        )
+    summary["copy_paste"] = "\n".join(lines)
+    return summary
+
+
 def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
     lines = [
         "",
@@ -1103,6 +1212,10 @@ def main(argv: list[str]) -> int:
         report["curve"] = only["curve"]
         report["selected_concurrency"] = only["selected_concurrency"]
         report["confirmation"] = only["confirmation"]
+
+    # Keep this last in insertion order so saved JSON ends with the human-facing
+    # headline receipt instead of making users reconstruct it from profile details.
+    report["summary"] = build_speed_summary(profiles)
 
     if args.out:
         atomic_write_json(args.out, report)
