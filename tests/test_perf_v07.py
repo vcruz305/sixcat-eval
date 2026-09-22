@@ -12,6 +12,7 @@ import pytest
 from sixcat.client import ChatClient
 from sixcat.perf import (
     _sample_from_stream,
+    build_speed_summary,
     confirmation_run,
     discover_concurrency,
     main as speed_main,
@@ -384,3 +385,80 @@ def test_one_command_runs_decode_balanced_and_prefill_suite(tmp_path):
     for profile in report["profiles"].values():
         assert profile["selected_concurrency"] == 2
         assert profile["confirmation"]["effective_decode_tps"]["p90"] is not None
+
+
+
+def test_speed_summary_uses_c1_decode_prefill_and_balanced_knee():
+    profiles = {
+        "decode": {
+            "selected_concurrency": 4,
+            "curve": {
+                "levels": [
+                    {"concurrency": 1, "effective_decode_tps": {"p50": 77.6, "p90": 80.3, "p95": 81.0, "max": 81.2}},
+                    {"concurrency": 4, "effective_decode_tps": {"p50": 58.0, "p90": 60.0, "p95": 61.0, "max": 62.0}},
+                ]
+            },
+            "confirmation": {"effective_decode_tps": {"p50": 58.0, "p90": 60.0, "p95": 61.0, "max": 62.0}},
+        },
+        "balanced": {
+            "selected_concurrency": 4,
+            "curve": {"max_usable_concurrency": 4, "levels": []},
+            "confirmation": {
+                "aggregate_output_tps": 132.0,
+                "ttft": {"p50": .390, "p95": .710, "p99": .900},
+            },
+        },
+        "prefill": {
+            "selected_concurrency": 2,
+            "curve": {
+                "levels": [
+                    {"concurrency": 1, "effective_prefill_tps": {"p50": 1940.0, "p95": 2010.0, "max": 2050.0}},
+                ]
+            },
+            "confirmation": {"effective_prefill_tps": {"p50": 1800.0, "p95": 1900.0, "max": 1950.0}},
+        },
+    }
+    summary = build_speed_summary(profiles)
+    assert summary["decode"]["max_tps"] == 81.2
+    assert summary["decode"]["p50_tps"] == 77.6
+    assert summary["decode"]["source_concurrency"] == 1
+    assert summary["prefill"]["p50_tps"] == 1940.0
+    assert summary["prefill"]["source_concurrency"] == 1
+    assert summary["balanced_serving"] == {"aggregate_output_tps": 132.0, "concurrency": 4}
+    assert summary["ttft"]["p50_ms"] == pytest.approx(390)
+    assert summary["ttft"]["p95_ms"] == pytest.approx(710)
+    assert summary["max_usable_concurrency"] == 4
+    assert summary["max_usable_concurrency_evidence"] == "measured-balanced-curve"
+    assert summary["copy_paste"] == (
+        "**Decode:** 81.2 tok/s max, 77.6 tok/s p50\n"
+        "**Prefill:** 1,940.0 tok/s p50\n"
+        "**Balanced serving:** 132.0 tok/s aggregate @ C=4\n"
+        "**TTFT:** 390 ms p50 / 710 ms p95\n"
+        "**Max usable concurrency:** 4"
+    )
+
+
+def test_speed_json_summary_is_last_and_copy_ready(tmp_path):
+    output = tmp_path / "suite-summary.json"
+    with streaming_endpoint() as (url, _):
+        rc = speed_main([
+            "--base-url", url,
+            "--model", "fixture",
+            "--concurrency", "2",
+            "--samples", "2",
+            "--max-seconds", "20",
+            "--out", str(output),
+        ])
+    assert rc == 0
+    text = output.read_text()
+    report = json.loads(text)
+    assert list(report)[-1] == "summary"
+    assert set(report["summary"]) >= {
+        "decode", "prefill", "balanced_serving", "ttft",
+        "max_usable_concurrency", "copy_paste",
+    }
+    assert "**Decode:**" in report["summary"]["copy_paste"]
+    assert "**Prefill:**" in report["summary"]["copy_paste"]
+    assert "**Balanced serving:**" in report["summary"]["copy_paste"]
+    assert "**TTFT:**" in report["summary"]["copy_paste"]
+    assert "**Max usable concurrency:**" in report["summary"]["copy_paste"]
