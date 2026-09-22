@@ -13,6 +13,7 @@
 - Missing native server/provider timings now print an explicit "server metrics unavailable for this route" reason instead of unexplained nulls.
 - `--profile decode|balanced|prefill|custom|all` selects workloads; `all` is the default.
 - Custom prompt/output lengths remain available through `--profile custom --prompt-words N --max-tokens N`.
+- Speed JSON now ends with a compact `summary` object plus a Markdown-ready `copy_paste` block for decode, prefill, balanced serving, TTFT, and max usable concurrency.
 
 0.7.0 extends SixCat's "finish useful work quickly" philosophy to the serving layer. Standard scoring remains 120 difficult items, but an optional unscored calibration phase can now discover the throughput knee of an already-running inference server before the benchmark starts.
 
