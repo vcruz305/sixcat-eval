@@ -110,6 +110,17 @@ Reported metrics include client TTFT/E2E/TPOT p50/p95/p99, aggregate output tok/
 
 With fewer than 100 successful confirmation requests, p99 is explicitly marked as a low-sample interpolated tail estimate. Use `--samples 100` or more when p99 is itself an acceptance criterion.
 
+The saved JSON ends with a `summary` object containing the headline raw values plus a ready-to-copy `copy_paste` string, for example:
+
+```text
+**Decode:** 81.2 tok/s max, 77.6 tok/s p50
+**Prefill:** 1,940.0 tok/s p50
+**Balanced serving:** 132.0 tok/s aggregate @ C=4
+**TTFT:** 390 ms p50 / 710 ms p95
+**Max usable concurrency:** 4
+```
+
+
 ## Score contract
 
 | Category | Source | Standard count | Verdict |
