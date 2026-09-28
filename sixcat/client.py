@@ -30,6 +30,19 @@ def _optional_number(value: Any) -> float | int | None:
     return value
 
 
+_LLAMA_CPP_RATE_TOLERANCE = 0.05
+_DISAGREE_FRACTION = 0.25
+_SERVER_SPEED_SOURCES = frozenset({"llama_cpp_timings", "sglang_meta", "server_timings_unverified"})
+_QUOTED_TO_SERVER = (
+    ("prefill_n", "server_prefill_n"),
+    ("decode_n", "server_decode_n"),
+    ("prefill_ms", "server_prefill_ms"),
+    ("decode_ms", "server_decode_ms"),
+    ("prefill_tps", "server_prefill_tps"),
+    ("decode_tps", "server_decode_tps"),
+)
+
+
 def _empty_speed() -> dict[str, Any]:
     return {
         "prefill_n": None,
@@ -39,11 +52,47 @@ def _empty_speed() -> dict[str, Any]:
         "prefill_tps": None,
         "decode_tps": None,
         "speed_source": None,
+        "client_prefill_tps": None,
+        "client_decode_tps": None,
+        "server_prefill_n": None,
+        "server_decode_n": None,
+        "server_prefill_ms": None,
+        "server_decode_ms": None,
+        "server_prefill_tps": None,
+        "server_decode_tps": None,
+        "server_speed_source": None,
+        "speed_note": None,
     }
 
 
+def _rates_agree(rate: Any, count: Any, millis: Any) -> bool:
+    """True when a reported tok/s matches count / seconds within a small tolerance."""
+    observed = _optional_number(rate)
+    n = _optional_number(count)
+    ms = _optional_number(millis)
+    if observed is None or n is None or ms is None or ms <= 0 or n < 0 or observed < 0:
+        return False
+    derived = float(n) / (float(ms) / 1000.0)
+    scale = max(abs(derived), abs(float(observed)), 1.0)
+    return abs(derived - float(observed)) <= _LLAMA_CPP_RATE_TOLERANCE * scale
+
+
+def _copy_quoted_to_server(out: dict[str, Any]) -> None:
+    for quoted, server in _QUOTED_TO_SERVER:
+        if out.get(server) is None and out.get(quoted) is not None:
+            out[server] = out[quoted]
+
+
 def extract_server_timings(payload: dict[str, Any]) -> dict[str, Any]:
-    """Copy provider speed fields when present. Never invent a prefill/decode split."""
+    """Record provider timings. Never invent a prefill/decode split.
+
+    Quoted prefill_tps / decode_tps are the comparable client measurement, filled
+    later by apply_stream_speed. A timings blob is stored under server_ fields.
+    Label it llama_cpp_timings only when it uses llama.cpp keys and both rates
+    agree with n/ms. Otherwise label it server_timings_unverified. SGLang
+    meta_info.ttft/tpot stays sglang_meta and may fill the quoted rate only when
+    no client stream measurement is applied afterwards.
+    """
     out = _empty_speed()
     if not isinstance(payload, dict):
         return out
@@ -54,15 +103,22 @@ def extract_server_timings(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         out.update(
             {
-                "prefill_n": _optional_number(timings.get("prompt_n")),
-                "decode_n": _optional_number(timings.get("predicted_n")),
-                "prefill_ms": _optional_number(timings.get("prompt_ms")),
-                "decode_ms": _optional_number(timings.get("predicted_ms")),
-                "prefill_tps": _optional_number(timings.get("prompt_per_second")),
-                "decode_tps": _optional_number(timings.get("predicted_per_second")),
-                "speed_source": "llama_cpp_timings",
+                "server_prefill_n": _optional_number(timings.get("prompt_n")),
+                "server_decode_n": _optional_number(timings.get("predicted_n")),
+                "server_prefill_ms": _optional_number(timings.get("prompt_ms")),
+                "server_decode_ms": _optional_number(timings.get("predicted_ms")),
+                "server_prefill_tps": _optional_number(timings.get("prompt_per_second")),
+                "server_decode_tps": _optional_number(timings.get("predicted_per_second")),
             }
         )
+        consistent = _rates_agree(
+            timings.get("prompt_per_second"), timings.get("prompt_n"), timings.get("prompt_ms")
+        ) and _rates_agree(
+            timings.get("predicted_per_second"), timings.get("predicted_n"), timings.get("predicted_ms")
+        )
+        label = "llama_cpp_timings" if consistent else "server_timings_unverified"
+        out["server_speed_source"] = label
+        out["speed_source"] = label
         return out
     meta = payload.get("meta_info")
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
@@ -82,6 +138,8 @@ def extract_server_timings(payload: dict[str, Any]) -> dict[str, Any]:
                 out["decode_ms"] = float(decode_n) * float(tpot) * 1000.0
         if out["prefill_tps"] is not None or out["decode_tps"] is not None:
             out["speed_source"] = "sglang_meta"
+            out["server_speed_source"] = "sglang_meta"
+            _copy_quoted_to_server(out)
     return out
 
 
@@ -115,6 +173,28 @@ def _reasoning_from_message(msg: dict[str, Any], data: dict[str, Any]) -> tuple[
     }
 
 
+def _rates_disagree(left: Any, right: Any) -> bool:
+    observed = _optional_number(left)
+    other = _optional_number(right)
+    if observed is None or other is None:
+        return False
+    scale = max(abs(float(observed)), abs(float(other)), 1.0)
+    return abs(float(observed) - float(other)) > _DISAGREE_FRACTION * scale
+
+
+def _stash_server_quote(out: dict[str, Any]) -> None:
+    """Keep a server number off the quoted fields before a client measurement."""
+    source = out.get("server_speed_source") or out.get("speed_source")
+    has_server = source in _SERVER_SPEED_SOURCES or any(out.get(server) is not None for _, server in _QUOTED_TO_SERVER)
+    if not has_server:
+        return
+    _copy_quoted_to_server(out)
+    if out.get("server_speed_source") is None and source in _SERVER_SPEED_SOURCES:
+        out["server_speed_source"] = source
+    for quoted, _server in _QUOTED_TO_SERVER:
+        out[quoted] = None
+
+
 def apply_stream_speed(
     timings: dict[str, Any],
     *,
@@ -123,25 +203,162 @@ def apply_stream_speed(
     ttft_s: float | None,
     wall_s: float | None,
 ) -> dict[str, Any]:
-    """Fill a prefill/decode split from stream TTFT only when the server omitted one."""
+    """Fill quoted prefill/decode rates from tokens and timestamps the client observed.
+
+    First completion token arrives at TTFT; remaining tokens are decode. A server
+    timings blob never suppresses this measurement and never becomes the quoted
+    rate. No stream TTFT means leave the quoted rate unset rather than inventing
+    a split from wall clock alone.
+    """
     out = dict(timings)
-    if out.get("prefill_tps") is not None and out.get("decode_tps") is not None:
-        return out
     if not ttft_s or ttft_s <= 0 or not wall_s or wall_s <= ttft_s:
         return out
+    if not prompt_n and decode_n is None:
+        return out
+    _stash_server_quote(out)
     if prompt_n:
         out["prefill_n"] = prompt_n
         out["prefill_ms"] = float(ttft_s) * 1000.0
         out["prefill_tps"] = float(prompt_n) / float(ttft_s)
+        out["client_prefill_tps"] = out["prefill_tps"]
     if decode_n is not None:
-        # First completion token arrives at TTFT; remaining tokens are decode.
         decode_after_first = max(float(decode_n) - 1.0, 0.0)
         decode_s = float(wall_s) - float(ttft_s)
         out["decode_n"] = decode_n
         out["decode_ms"] = decode_s * 1000.0
         out["decode_tps"] = decode_after_first / decode_s if decode_s > 0 else None
+        out["client_decode_tps"] = out["decode_tps"]
     out["speed_source"] = "stream_ttft"
+    notes: list[str] = []
+    if _rates_disagree(out.get("client_decode_tps"), out.get("server_decode_tps")):
+        notes.append("quoted decode_tps is the client stream measurement; server decode disagrees")
+    if _rates_disagree(out.get("client_prefill_tps"), out.get("server_prefill_tps")):
+        notes.append("quoted prefill_tps is the client stream measurement; server prefill disagrees")
+    out["speed_note"] = "; ".join(notes) if notes else out.get("speed_note")
     return out
+
+
+def _looks_like_sse(text: str) -> bool:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped.startswith("data:")
+    return False
+
+
+def _append_text(parts: list[str], value: Any) -> None:
+    if isinstance(value, str) and value:
+        parts.append(value)
+
+
+def _merge_tool_deltas(slots: dict[int, dict[str, Any]], calls: Any) -> None:
+    if not isinstance(calls, list):
+        return
+    for item in calls:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index", 0)
+        if isinstance(index, bool) or not isinstance(index, int):
+            index = 0
+        slot = slots.setdefault(
+            index,
+            {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+        )
+        if item.get("id"):
+            slot["id"] = item["id"]
+        if item.get("type"):
+            slot["type"] = item["type"]
+        function = item.get("function") if isinstance(item.get("function"), dict) else {}
+        name = function.get("name")
+        if isinstance(name, str) and name and not slot["function"]["name"]:
+            slot["function"]["name"] = name
+        arguments = function.get("arguments")
+        if isinstance(arguments, str) and arguments:
+            slot["function"]["arguments"] += arguments
+
+
+def assemble_chat_completion(raw: bytes) -> dict[str, Any]:
+    """Normalize a JSON body or OpenAI SSE stream into one chat completion object."""
+    text = raw.decode("utf-8")
+    if not _looks_like_sse(text):
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("completion response must be a JSON object")
+        return data
+    content: list[str] = []
+    reasoning: list[str] = []
+    reasoning_alias: list[str] = []
+    tools: dict[int, dict[str, Any]] = {}
+    finish = None
+    usage = None
+    timings = None
+    meta_info = None
+    model = None
+    system_fingerprint = None
+    saw_choice = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        raw_json = stripped[5:].strip()
+        if raw_json == "[DONE]":
+            break
+        if not raw_json:
+            continue
+        try:
+            chunk = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        if isinstance(chunk.get("timings"), dict):
+            timings = chunk["timings"]
+        if isinstance(chunk.get("meta_info"), dict):
+            meta_info = chunk["meta_info"]
+        if isinstance(chunk.get("model"), str):
+            model = chunk["model"]
+        if isinstance(chunk.get("system_fingerprint"), str):
+            system_fingerprint = chunk["system_fingerprint"]
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            continue
+        saw_choice = True
+        choice = choices[0]
+        if choice.get("finish_reason"):
+            finish = choice["finish_reason"]
+        sources = []
+        if isinstance(choice.get("delta"), dict):
+            sources.append(choice["delta"])
+        if isinstance(choice.get("message"), dict):
+            sources.append(choice["message"])
+        for source in sources:
+            _append_text(content, source.get("content"))
+            _append_text(reasoning, source.get("reasoning_content"))
+            _append_text(reasoning_alias, source.get("reasoning"))
+            _merge_tool_deltas(tools, source.get("tool_calls"))
+    message: dict[str, Any] = {"content": "".join(content)}
+    if reasoning:
+        message["reasoning_content"] = "".join(reasoning)
+    if reasoning_alias:
+        message["reasoning"] = "".join(reasoning_alias)
+    if tools:
+        message["tool_calls"] = [tools[index] for index in sorted(tools)]
+    data: dict[str, Any] = {
+        "choices": [{"finish_reason": finish, "message": message}] if saw_choice else []
+    }
+    if usage is not None:
+        data["usage"] = usage
+    if timings is not None:
+        data["timings"] = timings
+    if meta_info is not None:
+        data["meta_info"] = meta_info
+    if model is not None:
+        data["model"] = model
+    if system_fingerprint is not None:
+        data["system_fingerprint"] = system_fingerprint
+    return data
 
 
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> tuple[Any, str | None]:
@@ -252,22 +469,11 @@ class ChatClient:
                 result = self._complete_stdio(payload, request_params)
             result["wire_request"] = wire_request
             return result
-        req = urllib.request.Request(
-            self.base_url + "/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
-        started = time.perf_counter()
-        try:
-            with open_request(req, timeout=effective_timeout(self.timeout)) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(f"HTTP {e.code}: completion request rejected") from e
-        wall_s = time.perf_counter() - started
+        http_payload = dict(payload)
+        http_payload["stream"] = True
+        http_payload["stream_options"] = {"include_usage": True}
+        data, wall_s, ttft_s, sent_payload = self._post_completion(http_payload)
+        wire_request = copy.deepcopy(sent_payload)
         if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
             raise ValueError("completion response requires a non-empty choices array")
         choice = data["choices"][0]
@@ -279,8 +485,15 @@ class ChatClient:
         if msg.get("tool_calls") is not None and not isinstance(msg["tool_calls"], list):
             raise ValueError("tool_calls must be an array")
         usage = data.get("usage") or {}
-        timings = extract_server_timings(data)
+        prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
+        timings = apply_stream_speed(
+            extract_server_timings(data),
+            prompt_n=prompt_tokens,
+            decode_n=completion_tokens,
+            ttft_s=ttft_s,
+            wall_s=wall_s,
+        )
         wall_tps = None
         if (
             isinstance(completion_tokens, (int, float))
@@ -305,7 +518,7 @@ class ChatClient:
             "reasoning_details": reasoning_meta["reasoning_details"],
             "thinking_field": reasoning_meta["thinking_field"],
             "usage": {
-                "prompt_tokens": usage.get("prompt_tokens"),
+                "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "reasoning_tokens": reasoning_meta["reasoning_tokens"],
                 "completion_tokens_details": usage.get("completion_tokens_details"),
@@ -316,6 +529,41 @@ class ChatClient:
             "request_params": request_params,
             "raw": data,
         }
+
+    def _post_completion(self, payload: dict[str, Any]) -> tuple[dict[str, Any], float, float | None, dict[str, Any]]:
+        """POST one completion. Stream so TTFT is observable; fall back only on reject."""
+        req = urllib.request.Request(
+            self.base_url + "/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        started = time.perf_counter()
+        try:
+            with open_request(req, timeout=effective_timeout(self.timeout)) as resp:
+                raw = resp.read()
+                first_token_at = getattr(resp, "first_token_at", None)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 422) and "stream_options" in payload:
+                fallback = dict(payload)
+                fallback.pop("stream_options", None)
+                return self._post_completion(fallback)
+            if exc.code in (400, 422) and payload.get("stream"):
+                fallback = dict(payload)
+                fallback.pop("stream", None)
+                fallback.pop("stream_options", None)
+                return self._post_completion(fallback)
+            raise RuntimeError(f"HTTP {exc.code}: completion request rejected") from exc
+        wall_s = time.perf_counter() - started
+        ttft_s = None
+        if isinstance(first_token_at, (int, float)) and not isinstance(first_token_at, bool):
+            elapsed = float(first_token_at) - started
+            if elapsed > 0:
+                ttft_s = elapsed
+        return assemble_chat_completion(raw), wall_s, ttft_s, payload
 
     def _complete_stdio(self, payload: dict[str, Any], request_params: dict[str, Any]) -> dict[str, Any]:
         """Ask a harness for one completion. Protocol JSONL on stdio; never log secrets."""

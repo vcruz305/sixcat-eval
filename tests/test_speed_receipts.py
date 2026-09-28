@@ -4,7 +4,7 @@ import unittest
 
 
 class TestExtractServerTimings(unittest.TestCase):
-    def test_reads_llama_cpp_prefill_and_decode_rates(self):
+    def test_consistent_llama_cpp_blob_is_server_timings_not_the_quoted_rate(self):
         from sixcat.client import extract_server_timings
 
         timings = extract_server_timings(
@@ -20,12 +20,16 @@ class TestExtractServerTimings(unittest.TestCase):
             }
         )
 
-        self.assertEqual(timings["prefill_n"], 120)
-        self.assertEqual(timings["decode_n"], 80)
-        self.assertEqual(timings["prefill_ms"], 400.0)
-        self.assertEqual(timings["decode_ms"], 2000.0)
-        self.assertEqual(timings["prefill_tps"], 300.0)
-        self.assertEqual(timings["decode_tps"], 40.0)
+        self.assertIsNone(timings["prefill_tps"])
+        self.assertIsNone(timings["decode_tps"])
+        self.assertEqual(timings["server_prefill_n"], 120)
+        self.assertEqual(timings["server_decode_n"], 80)
+        self.assertEqual(timings["server_prefill_ms"], 400.0)
+        self.assertEqual(timings["server_decode_ms"], 2000.0)
+        self.assertEqual(timings["server_prefill_tps"], 300.0)
+        self.assertEqual(timings["server_decode_tps"], 40.0)
+        self.assertEqual(timings["server_speed_source"], "llama_cpp_timings")
+        self.assertEqual(timings["speed_source"], "llama_cpp_timings")
 
     def test_missing_timings_stay_null_instead_of_invented(self):
         from sixcat.client import extract_server_timings
@@ -66,7 +70,7 @@ class TestExtractServerTimings(unittest.TestCase):
         self.assertAlmostEqual(timings["decode_tps"], 20.0)
         self.assertEqual(timings["speed_source"], "stream_ttft")
 
-    def test_server_timings_win_over_stream_estimate(self):
+    def test_server_timings_do_not_replace_the_client_measurement(self):
         from sixcat.client import apply_stream_speed, extract_server_timings
 
         timings = apply_stream_speed(
@@ -79,9 +83,211 @@ class TestExtractServerTimings(unittest.TestCase):
             wall_s=1.5,
         )
 
-        self.assertEqual(timings["prefill_tps"], 300.0)
-        self.assertEqual(timings["decode_tps"], 40.0)
-        self.assertEqual(timings["speed_source"], "llama_cpp_timings")
+        self.assertAlmostEqual(timings["prefill_tps"], 200.0)
+        self.assertAlmostEqual(timings["decode_tps"], 20.0)
+        self.assertEqual(timings["client_decode_tps"], 20.0)
+        self.assertEqual(timings["server_decode_tps"], 40.0)
+        self.assertEqual(timings["speed_source"], "stream_ttft")
+        self.assertNotEqual(timings["server_speed_source"], "llama_cpp_timings")
+        self.assertIn("client stream measurement", timings["speed_note"])
+
+
+class TestEngineAgnosticQuotedSpeed(unittest.TestCase):
+    def test_inconsistent_llama_cpp_keys_do_not_claim_llama_cpp_or_block_stream(self):
+        from sixcat.client import apply_stream_speed, extract_server_timings
+
+        timings = extract_server_timings(
+            {
+                "timings": {
+                    "prompt_n": 1000,
+                    "prompt_ms": 100.0,
+                    "prompt_per_second": 50.0,
+                    "predicted_n": 80,
+                    "predicted_ms": 1000.0,
+                    "predicted_per_second": 13.3,
+                }
+            }
+        )
+
+        self.assertNotEqual(timings.get("speed_source"), "llama_cpp_timings")
+        self.assertNotEqual(timings.get("server_speed_source"), "llama_cpp_timings")
+        measured = apply_stream_speed(
+            timings,
+            prompt_n=100,
+            decode_n=21,
+            ttft_s=0.5,
+            wall_s=1.5,
+        )
+
+        self.assertEqual(measured["speed_source"], "stream_ttft")
+        self.assertAlmostEqual(measured["prefill_tps"], 200.0)
+        self.assertAlmostEqual(measured["decode_tps"], 20.0)
+        self.assertAlmostEqual(measured["client_decode_tps"], 20.0)
+        self.assertEqual(measured["server_decode_tps"], 13.3)
+        self.assertEqual(measured["server_speed_source"], "server_timings_unverified")
+        self.assertNotEqual(measured["decode_tps"], 13.3)
+        self.assertIn("server decode disagrees", measured["speed_note"])
+
+    def test_stream_ttft_without_server_blob_is_the_quoted_rate(self):
+        from sixcat.client import apply_stream_speed, extract_server_timings
+
+        timings = apply_stream_speed(
+            extract_server_timings({}),
+            prompt_n=100,
+            decode_n=21,
+            ttft_s=0.5,
+            wall_s=1.5,
+        )
+
+        self.assertEqual(timings["speed_source"], "stream_ttft")
+        self.assertAlmostEqual(timings["prefill_tps"], 200.0)
+        self.assertAlmostEqual(timings["decode_tps"], 20.0)
+        self.assertIsNone(timings["server_decode_tps"])
+        self.assertIsNone(timings["server_speed_source"])
+        self.assertIsNone(timings["speed_note"])
+
+    def test_no_timings_and_no_stream_ttft_leaves_the_rate_null(self):
+        from sixcat.client import apply_stream_speed, extract_server_timings
+
+        timings = apply_stream_speed(
+            extract_server_timings({"usage": {"prompt_tokens": 10, "completion_tokens": 20}}),
+            prompt_n=10,
+            decode_n=20,
+            ttft_s=None,
+            wall_s=1.5,
+        )
+
+        self.assertIsNone(timings["prefill_tps"])
+        self.assertIsNone(timings["decode_tps"])
+        self.assertIsNone(timings["prefill_ms"])
+        self.assertIsNone(timings["decode_ms"])
+        self.assertIsNone(timings["speed_source"])
+        self.assertIsNone(timings["client_decode_tps"])
+
+
+class TestCompletionQuotesClientRate(unittest.TestCase):
+    def test_streamed_completion_quotes_client_rate_not_the_timings_blob(self):
+        from unittest.mock import patch
+
+        from sixcat.client import ChatClient
+        from sixcat.policy import strict_policy
+
+        sse = "\n".join(
+            [
+                'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}',
+                'data: {"choices":[{"delta":{"content":"B"}}]}',
+                (
+                    'data: {"choices":[{"finish_reason":"stop","delta":{}}],'
+                    '"usage":{"prompt_tokens":100,"completion_tokens":21},'
+                    '"timings":{"prompt_n":100,"prompt_ms":10.0,"prompt_per_second":13.3,'
+                    '"predicted_n":21,"predicted_ms":1000.0,"predicted_per_second":13.3}}'
+                ),
+                "data: [DONE]",
+                "",
+            ]
+        ).encode()
+
+        class FakeResponse:
+            first_token_at = 10.4
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return sse
+
+        clock = iter([10.0, 11.5])
+        captured = {}
+
+        def fake_open(request, timeout):
+            captured.update(__import__("json").loads(request.data.decode("utf-8")))
+            return FakeResponse()
+
+        with patch("sixcat.client.open_request", side_effect=fake_open), patch(
+            "sixcat.client.time.perf_counter", side_effect=lambda: next(clock)
+        ):
+            out = ChatClient("http://localhost:9999/v1", "model", strict_policy()).complete("probe")
+
+        self.assertTrue(captured.get("stream"))
+        self.assertEqual(out["text"], "B")
+        self.assertEqual(out["finish"], "stop")
+        self.assertEqual(out["speed_source"], "stream_ttft")
+        self.assertAlmostEqual(out["prefill_tps"], 100 / 0.4)
+        self.assertAlmostEqual(out["decode_tps"], 20 / 1.1)
+        self.assertEqual(out["client_decode_tps"], out["decode_tps"])
+        self.assertEqual(out["server_decode_tps"], 13.3)
+        self.assertEqual(out["server_speed_source"], "server_timings_unverified")
+        self.assertNotEqual(out["speed_source"], "llama_cpp_timings")
+
+    def test_sse_tool_deltas_assemble_without_changing_the_call(self):
+        from sixcat.client import assemble_chat_completion
+
+        raw = "\n".join(
+            [
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":""}}]}}]}',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"path\\":\\"README.md\\"}"}}]}}]}',
+                'data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}',
+                "data: [DONE]",
+                "",
+            ]
+        ).encode()
+
+        message = assemble_chat_completion(raw)["choices"][0]["message"]
+
+        self.assertEqual(
+            message["tool_calls"],
+            [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+                }
+            ],
+        )
+        self.assertEqual(assemble_chat_completion(raw)["choices"][0]["finish_reason"], "tool_calls")
+
+    def test_json_timings_blob_is_not_quoted_when_the_client_saw_no_ttft(self):
+        import json
+        from unittest.mock import patch
+
+        from sixcat.client import ChatClient
+        from sixcat.policy import strict_policy
+
+        body = {
+            "choices": [{"finish_reason": "stop", "message": {"content": "B"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 21},
+            "timings": {
+                "prompt_n": 100,
+                "prompt_ms": 10.0,
+                "prompt_per_second": 13.3,
+                "predicted_n": 21,
+                "predicted_ms": 1000.0,
+                "predicted_per_second": 13.3,
+            },
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return json.dumps(body).encode()
+
+        with patch("sixcat.client.open_request", return_value=FakeResponse()):
+            out = ChatClient("http://localhost:9999/v1", "model", strict_policy()).complete("probe")
+
+        self.assertEqual(out["text"], "B")
+        self.assertIsNone(out["decode_tps"])
+        self.assertIsNone(out["prefill_tps"])
+        self.assertEqual(out["server_decode_tps"], 13.3)
+        self.assertEqual(out["speed_source"], "server_timings_unverified")
+        self.assertNotEqual(out["speed_source"], "llama_cpp_timings")
 
 
 class TestSpeedRowsAndStats(unittest.TestCase):
@@ -109,6 +315,36 @@ class TestSpeedRowsAndStats(unittest.TestCase):
         self.assertEqual(row["decode_tps"], 24.2)
         self.assertEqual(row["prefill_n"], 40)
         self.assertEqual(row["decode_n"], 80)
+
+    def test_row_quotes_client_rate_and_keeps_the_server_blob(self):
+        from sixcat.run import _row
+
+        row = _row(
+            {
+                "finish": "stop",
+                "usage": {"completion_tokens": 21, "prompt_tokens": 100},
+                "prefill_tps": 250.0,
+                "decode_tps": 18.18,
+                "client_prefill_tps": 250.0,
+                "client_decode_tps": 18.18,
+                "server_prefill_tps": 50.0,
+                "server_decode_tps": 13.3,
+                "server_speed_source": "server_timings_unverified",
+                "speed_source": "stream_ttft",
+                "speed_note": "quoted decode_tps is the client stream measurement; server decode disagrees",
+                "text": "B",
+                "reasoning_content": "",
+            },
+            ok=True,
+            pred="B",
+        )
+
+        self.assertEqual(row["decode_tps"], 18.18)
+        self.assertEqual(row["client_decode_tps"], 18.18)
+        self.assertEqual(row["server_decode_tps"], 13.3)
+        self.assertEqual(row["server_speed_source"], "server_timings_unverified")
+        self.assertEqual(row["speed_source"], "stream_ttft")
+        self.assertIn("disagrees", row["speed_note"])
 
     def test_category_stats_summarize_prefill_and_decode_rates(self):
         from sixcat.score import category_stats

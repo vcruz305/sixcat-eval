@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import concurrent.futures
 import io
+import json
 import threading
 import time
 import urllib.error
@@ -18,6 +19,49 @@ import urllib.error
 import httpx
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+class ResponseBody(io.BytesIO):
+    def __init__(self, body: bytes, first_token_at: float | None = None):
+        super().__init__(body)
+        self.first_token_at = first_token_at
+
+
+def sse_line_has_completion_token(line: bytes) -> bool:
+    """True when an SSE line carries a generated token, not an empty role delta."""
+    try:
+        text = line.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return False
+    if not text.startswith("data:"):
+        return False
+    raw = text[5:].strip()
+    if not raw or raw == "[DONE]":
+        return False
+    try:
+        chunk = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(chunk, dict):
+        return False
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return False
+    choice = choices[0]
+    sources = []
+    if isinstance(choice.get("delta"), dict):
+        sources.append(choice["delta"])
+    if isinstance(choice.get("message"), dict):
+        sources.append(choice["message"])
+    for source in sources:
+        for key in ("content", "reasoning_content", "reasoning"):
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                return True
+        tools = source.get("tool_calls")
+        if isinstance(tools, list) and any(isinstance(item, dict) for item in tools):
+            return True
+    return False
 
 class HTTPTransport:
     def __init__(self):
@@ -51,16 +95,27 @@ class HTTPTransport:
                 timeout=remaining,
             ) as response:
                 body = bytearray()
+                pending = bytearray()
+                first_token_at = None
                 async for chunk in response.aiter_bytes():
                     if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
                         raise ValueError("HTTP response exceeds 16 MiB safety limit")
                     body.extend(chunk)
+                    if first_token_at is None:
+                        pending.extend(chunk)
+                        while b"\n" in pending:
+                            line, _, pending = pending.partition(b"\n")
+                            if sse_line_has_completion_token(line):
+                                first_token_at = time.perf_counter()
+                                break
+                if first_token_at is None and pending and sse_line_has_completion_token(pending):
+                    first_token_at = time.perf_counter()
                 if response.status_code >= 300:
                     raise urllib.error.HTTPError(
                         request.full_url, response.status_code, response.reason_phrase,
                         dict(response.headers), io.BytesIO(bytes(body)),
                     )
-                return bytes(body)
+                return bytes(body), first_token_at
 
     def open(self, request, timeout):
         if self._closed:
@@ -70,7 +125,8 @@ class HTTPTransport:
         try:
             # The outer bound also covers loop scheduling. Cancellation closes the
             # response stream; it cannot promise the remote server stops computing.
-            return io.BytesIO(future.result(timeout=timeout))
+            body, first_token_at = future.result(timeout=timeout)
+            return ResponseBody(body, first_token_at)
         except concurrent.futures.TimeoutError as exc:
             future.cancel()
             raise TimeoutError("HTTP total request deadline reached") from exc

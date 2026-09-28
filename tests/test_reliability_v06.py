@@ -276,6 +276,7 @@ def test_mc_parser_regressions(text, value):
 
 def test_mc_choice_range_and_status():
     assert parse_mc_answer("P", valid_letters="ABCD")["value"] is None
+    assert parse_mc_answer("alpha beta", valid_letters="ABCD")["status"] == "unparsed"
     assert parse_mc_answer("Answer is B. Answer is C.")["status"] == "ambiguous"
 
 

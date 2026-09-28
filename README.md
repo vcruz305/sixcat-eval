@@ -184,7 +184,7 @@ At 20 items per category, one changed verdict moves that category by 5 points an
 
 ## Quality and speed are separate measurements
 
-All six categories retain completion, reasoning and answer token counts when supplied, request latency, provider timings, truncation and parse diagnostics. Missing provider telemetry stays missing.
+All six categories retain completion, reasoning and answer token counts when supplied, request latency, truncation and parse diagnostics. Quoted `prefill_tps` / `decode_tps` are the client stream measurement (first token at TTFT, remaining tokens over the rest of the wall clock). A server timings blob is kept on `server_prefill_tps` / `server_decode_tps` and never replaces that quote. It is labeled `llama_cpp_timings` only when the blob is internally consistent; otherwise `server_timings_unverified`. No stream TTFT and no SGLang `meta_info` leaves the quoted rate null. Missing provider telemetry stays missing.
 
 `speed.request_weighted_tps` (legacy alias `suite_tps`) is tokens divided by summed request durations. It is **not** concurrent aggregate throughput. `execution.throughput_tps` uses tokens generated in the current session divided by the session's actual elapsed time, with explicit telemetry coverage. `execution_segments` preserves resumed sessions separately; cached responses are not counted as newly generated tokens.
 

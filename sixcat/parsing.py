@@ -82,7 +82,7 @@ def parse_mc_answer(text: str, valid_letters: str | None = None) -> dict[str, An
     if len(set(letters)) > 1:
         return {"value": None, "confidence": "low", "status": "ambiguous"}
     value = letters[-1] if letters else None
-    if valid_letters is not None and value not in valid_letters:
+    if value is not None and valid_letters is not None and value not in valid_letters:
         value = None
     return {"value": value, "confidence": "low", "status": "fallback" if value else "unparsed"}
 
