@@ -630,8 +630,8 @@ def _main(argv: list[str] | None = None) -> int:
           file=sys.stderr, flush=True)
     with proxy_server(target, call_llm_fn=call_llm) as proxy:
         command = ["preflight"] if args.command == "preflight" else []
-        return sixcat_main([*command, "--base-url", proxy.base_url, "--model", target.model,
-                            "--api-key", proxy.api_key, *forwarded])
+        return sixcat_main([*command, f"--base-url={proxy.base_url}", f"--model={target.model}",
+                            f"--api-key={proxy.api_key}", *forwarded])
 
 
 def main(argv: list[str] | None = None) -> int:

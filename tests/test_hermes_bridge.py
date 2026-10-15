@@ -206,3 +206,10 @@ def test_import_failure_has_actionable_error_without_traceback(monkeypatch, caps
     result = capsys.readouterr()
     assert not result.out
     assert "Python 3.11+" in result.err and "Traceback" not in result.err
+
+
+def test_generated_token_starting_with_dash_does_not_become_cli_flag(monkeypatch, capsys, target):
+    fake_aux(monkeypatch, target)
+    monkeypatch.setattr(runner.secrets, "token_urlsafe", lambda size: "-dash-prefixed-ephemeral-test-token")
+    assert runner.main(["preflight", "--", "--policy", "strict", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["inference_verified"] is False
