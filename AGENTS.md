@@ -8,7 +8,11 @@ Do not ask the user to copy a long operator prompt or fill optional settings.
 
 For example: "Run sixcat eval against the Hermes provider nous portal and the
 model Nemotron ultra free." Resolve the actual name through the fresh authenticated
-catalog; preserve the free requirement and never guess or substitute a paid route.
+catalog. This is only an example model name, not a free-only requirement.
+No price filter by default: paid, free and subscription-backed targets are allowed.
+Preserve the requested model/variant, including words such as "free" in its name.
+Use `--free-only` only for a separate explicit price restriction, never inferred
+from the example or model name. Never guess or silently substitute another route.
 The optional interactive wizard is not the default for a named target.
 
 When operating an evaluation, do not put answer keys into any model context,

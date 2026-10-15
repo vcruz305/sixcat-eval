@@ -43,10 +43,11 @@ def match_catalog(query: str, rows: list[dict[str, Any]], *, free_only: bool = F
     words = _tokens(query)
     if not words:
         raise ValueError("model query cannot be empty")
-    require_free = free_only or "free" in words
-    wanted = words - {"free"} if require_free else words
-    if not wanted:
-        raise ValueError("name a model as well as the free constraint")
+    # Model identity and price constraints are independent. A token such as
+    # "free" in an ID/display name stays part of the name, not a budget request.
+    # Only the explicit option enables catalog-price filtering.
+    require_free = bool(free_only)
+    wanted = words
     exact = [r for r in rows if isinstance(r, dict) and r.get("id") == query]
     candidates: dict[str, dict[str, Any]] = {}
     for row in exact or rows:

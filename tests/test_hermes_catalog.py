@@ -23,7 +23,7 @@ def test_user_sentence_model_resolves_without_manufacturing_id():
     receipt = catalog.match_catalog("Nemotron ultra free", [model(PAID_ID), model()])
     assert receipt["status"] == "resolved"
     assert receipt["model"] == FREE_ID
-    assert receipt["free_required"] is True
+    assert receipt["free_required"] is False
     assert receipt["inference_verified"] is False
     assert receipt["billing_verified"] is False
 
@@ -57,12 +57,12 @@ def test_free_only_flag_checks_prices_even_without_free_suffix():
     {"prompt": "-1", "completion": "0"}, {"prompt": "0", "completion": "bad"},
 ])
 def test_nonzero_or_malformed_pricing_never_overridden_by_free_label(pricing):
-    receipt = catalog.match_catalog("Nemotron ultra free", [model(pricing=pricing)])
+    receipt = catalog.match_catalog("Nemotron ultra free", [model(pricing=pricing)], free_only=True)
     assert receipt["status"] == "not_found"
 
 
 def test_subscription_evidence_is_not_free_billing_attestation():
-    receipt = catalog.match_catalog("Nemotron ultra free", [model(PAID_ID, billing_mode="subscription")])
+    receipt = catalog.match_catalog("Nemotron ultra", [model(PAID_ID, billing_mode="subscription")], free_only=True)
     assert receipt["model"] == PAID_ID
     assert "subscription" in receipt["candidates"][0]["free_evidence"]
     assert receipt["billing_verified"] is False
@@ -92,7 +92,7 @@ def test_duplicates_and_malformed_rows():
     assert receipt["model"] == FREE_ID and len(receipt["candidates"]) == 1
 
 
-@pytest.mark.parametrize("query", ["", "   ", "free", "()"])
+@pytest.mark.parametrize("query", ["", "   ", "()"])
 def test_query_requires_a_model(query):
     with pytest.raises(ValueError):
         catalog.match_catalog(query, [])
@@ -181,7 +181,63 @@ def test_readme_skill_and_guide_have_same_one_line_contract():
         assert sentence in path.read_text()
     skill = (root / ".hermes/skills/sixcat-eval/SKILL.md").read_text()
     assert skill.index("## One-line requests") < skill.index("## Procedure (optional interactive wizard)")
-    for phrase in ("takes precedence", "Do not ask for policy", "free is a constraint", "Code N/A", "unless overridden"):
+    for phrase in ("takes precedence", "Do not ask for policy", "No price filter by default", "Code N/A", "unless overridden"):
         assert phrase in skill
     assert "the **very next interaction**" not in skill
     assert "When the user already supplied the target, policy, scope, thinking setting" not in skill
+
+
+@pytest.mark.parametrize("pricing", [None, {}, {"prompt": "1", "completion": "2"},
+    {"prompt": "NaN", "completion": "unknown"}])
+@pytest.mark.parametrize("identifier", [PAID_ID, FREE_ID])
+def test_named_target_resolves_regardless_of_price_without_explicit_filter(identifier, pricing):
+    receipt = catalog.match_catalog(identifier, [model(identifier, pricing=pricing)])
+    assert receipt["model"] == identifier
+    assert receipt["free_required"] is False
+    assert receipt["billing_verified"] is False
+
+
+def test_free_in_friendly_name_is_not_a_price_constraint():
+    row = model(pricing={"prompt": "1", "completion": "2"})
+    receipt = catalog.match_catalog("Nemotron ultra free", [row])
+    assert receipt["model"] == FREE_ID
+    assert receipt["free_required"] is False
+    assert catalog.match_catalog("Nemotron ultra free", [row], free_only=True)["status"] == "not_found"
+
+
+@pytest.mark.parametrize("fields", [{"pricing": {"prompt": "0", "completion": "0"}},
+    {"billing_mode": "subscription"}])
+@pytest.mark.parametrize("free_only", [False, True])
+def test_name_token_is_not_dropped_to_pick_an_unrequested_variant(fields, free_only):
+    result = catalog.match_catalog("Nemotron ultra free", [model(PAID_ID, **fields)], free_only=free_only)
+    assert result["status"] == "not_found"
+    assert result["model"] is None
+
+
+def test_free_can_be_a_literal_model_id():
+    assert catalog.match_catalog("free", [{"id": "free"}])["model"] == "free"
+
+
+@pytest.mark.parametrize("explicit_filter", [False, True])
+def test_cli_only_sets_price_filter_when_explicitly_requested(monkeypatch, capsys, explicit_filter):
+    seen = []
+    def resolve(profile, query, *, free_only):
+        seen.append((profile, query, free_only))
+        return {"status": "resolved", "model": FREE_ID}
+    monkeypatch.setattr(catalog, "resolve_nous_query", resolve)
+    args = ["resolve", "--model-query", "Nemotron ultra free", "--json"]
+    if explicit_filter:
+        args.append("--free-only")
+    assert hermes.main(args) == 0
+    assert seen == [("current", "Nemotron ultra free", explicit_filter)]
+    assert json.loads(capsys.readouterr().out)["model"] == FREE_ID
+
+
+def test_operator_docs_do_not_impose_a_price_requirement_from_an_example():
+    root = Path(__file__).resolve().parents[1]
+    for relative in ("README.md", "AGENTS.md", "docs/hermes-nous.md", ".hermes/skills/sixcat-eval/SKILL.md"):
+        text = (root / relative).read_text()
+        assert "No price filter by default" in text
+        assert "free is a constraint" not in text
+        assert "preserve the free requirement" not in text
+        assert "--free-only" in text

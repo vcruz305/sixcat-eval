@@ -6,7 +6,7 @@
 
 SixCat is a daily regression check for local models, quantizations and provider-served models, not another benchmark that takes all afternoon. Standard mode keeps the frozen `challenge-v1` selection: 20 items in each category, with the hardest-first ordering retained within each category. Categories dispatch round-robin through one bounded concurrent pool so a time-limited run does not finish Knowledge and Math while never reaching Tools.
 
-**Current release: [v0.8.1 — One-line Hermes model evaluation](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.1).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
+**Current release: [v0.8.2 — One-line Hermes model evaluation](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.2).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
 
 [HTTP quick start](#run-the-short-benchmark) · [Hermes / Nous Portal](#hermes-and-nous-portal) · [Serving speed](#adaptive-concurrency-and-serving-speed-benchmark) · [Score contract](#score-contract) · [Release notes](RELEASE_NOTES.md)
 
@@ -47,7 +47,9 @@ target, but must not answer or grade its own benchmark questions.
 
 ### Just ask your agent
 
-With the **current Sixcat skill loaded**, one sentence is enough:
+With the **current Sixcat skill loaded**, name any supported provider and model:
+`Run sixcat eval against the Hermes provider PROVIDER and the model MODEL.`
+One example is:
 
 ```text
 Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free.
@@ -56,9 +58,13 @@ Run sixcat eval against the Hermes provider nous portal and the model Nemotron u
 Or invoke it explicitly: `/sixcat-eval nous portal Nemotron ultra free`.
 You do not need to provide an exact ID, an operator prompt, shell variables or a
 results path. The skill resolves the name from your live authenticated Nous
-catalog, preserves **free** as a requirement, and handles inspect, smoke, launch
-and saved-result reporting. It asks only when a real model ambiguity or blocker
-requires your input; it must never silently choose a paid sibling.
+catalog and handles inspect, smoke, launch and saved-result reporting.
+**No price filter by default:** free, paid and subscription-backed models can
+all be selected. "Nemotron ultra free" is only an example model name; the word
+"free" stays part of that name, not an inferred spending constraint. Apply a
+price filter only when the user separately requests one, such as "free models
+only" (`--free-only`). Do not silently substitute any different model or variant.
+It asks only when a real model ambiguity or blocker requires your input.
 
 Defaults are strict sampling, thinking on, 20 items per category, concurrency 1,
 a 30-minute run cap, and unique result paths. All six categories run when an
@@ -88,7 +94,7 @@ HERMES_PYTHON="/absolute/path/to/hermes-agent/venv/bin/python"
 ```
 
 To pin the release without a source checkout, install
-`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.1` into that same environment.
+`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.2` into that same environment.
 The [project-local Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) remains
 available: start Hermes in the checkout and trust its project skills with
 `hermes skills trust`. The old `scripts/hermes_runner.py` entry point remains

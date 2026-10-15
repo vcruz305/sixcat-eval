@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
-description: Run Sixcat from a model name, including Nous free models.
-version: 0.8.1
+description: Run Sixcat from a provider and model name.
+version: 0.8.2
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -36,12 +36,16 @@ user input. Use an explicit user override whenever one is supplied.
    authentication; never ask the user to paste credentials or switch models.
 2. Resolve a friendly name from the live authenticated Nous catalog with:
    `python -m sixcat.hermes resolve --profile current --runtime-provider nous --model-query "Nemotron ultra free" --json`.
-   Substitute the actual requested phrase. The word **free is a constraint**:
-   do not drop it, make up a `:free` ID, choose a paid sibling or use a static
-   fallback catalog. The resolver returns an exact `model` only for one match.
-   If `status=ambiguous`, ask one targeted model-choice question; if not found,
-   report that no matching available free variant was found. Do not guess.
-   Catalog labels or zero prices are evidence, not guaranteed free billing.
+   Substitute the actual requested phrase. **No price filter by default.**
+   Free, paid and subscription-backed targets are all allowed. "Nemotron ultra
+   free" is an example name, not a budget requirement; retain every name token,
+   including "free", to select the requested variant. Only add `--free-only`
+   when the user separately requests a price restriction (e.g. "free models only").
+   Never infer that restriction merely from a model ID/display name. Do not make
+   up a wire ID, choose a different variant or use a static fallback catalog.
+   The resolver returns an exact `model` only for one match. If `status=ambiguous`,
+   ask one targeted model-choice question; if not found, report that no matching
+   model was found. Catalog pricing is evidence, not a billing guarantee.
 3. Use profile `current`, policy `strict`, thinking `on`, `--limit 20`,
    `--concurrency 1`, and `--max-minutes 30`, unless overridden. Generate a unique
    filesystem-safe model/timestamp RUN_ID and JSON/JSONL paths automatically.
@@ -85,7 +89,7 @@ consumes provider quota. A smoke failure is not a Sixcat benchmark score.
 
 For Nous Portal, always pin `--runtime-provider nous` and the exact model ID
 already available to the user. Do not add a `:free` suffix unless it is part of
-the actual ID. Never use provider `auto` or substitute a paid model. Default to
+the actual ID. Never use provider `auto` or substitute a different model. Default to
 concurrency 1 for quota-limited Portal routes; do not auto-tune concurrency there.
 One Hermes LLM may operate this deterministic runner against another LLM. The
 controller must not answer, edit or grade the target's responses itself, and
@@ -96,7 +100,7 @@ Asking an agent to read the tests/solutions and then report its own score is not
 A full `hermes chat -q` session adds persona, memory and tools; evaluate that
 separately as an agent-assisted configuration, not the raw Sixcat leaderboard.
 
-## 0.8.1 execution contract
+## 0.8.2 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
 full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
