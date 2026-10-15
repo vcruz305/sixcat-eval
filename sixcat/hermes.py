@@ -562,7 +562,10 @@ def _parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--profile", default="current")
     resolve_parser.add_argument("--runtime-provider", choices=("nous",), default="nous")
     resolve_parser.add_argument("--model-query", required=True)
-    resolve_parser.add_argument("--free-only", action="store_true")
+    resolve_parser.add_argument(
+        "--free-only", action="store_true",
+        help="Optional catalog price filter; never inferred from the model name",
+    )
     resolve_parser.add_argument("--json", action="store_true")
 
     inspect_parser = subparsers.add_parser("inspect")

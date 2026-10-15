@@ -1,3 +1,25 @@
+# SixCat 0.8.2 — model names are not spending constraints
+
+Correct the v0.8.1 interpretation of the example "Nemotron ultra free".
+A provider and model name remain sufficient; free access is not a requirement.
+
+- Name resolution keeps every requested model-name token, including "free".
+  No price filter is inferred from a model ID or display name.
+- Paid, free, subscription-backed and unknown-price targets can be selected by
+  name. Exact model/variant checks and ambiguity handling remain unchanged.
+- The optional `--free-only` catalog filter is applied only when explicitly
+  requested, independently of model-name matching. It is not a billing guarantee.
+- README, Hermes skill, operator guide and AGENTS.md now state the same rule.
+- Regression tests cover paid/unknown pricing, literal free-named variants,
+  no substitution to other zero-priced variants, and explicit-only CLI filtering.
+
+This does not authorize automatic provider/model fallbacks, select a live model,
+change account settings, or make a paid API call. Dataset/scoring contracts and
+one-line execution defaults are unchanged. No live Portal inference or billing
+verification was performed for this patch.
+
+---
+
 # SixCat 0.8.1 — one-line Hermes model evaluation
 
 A provider and model name now suffice for the Hermes skill. For example:

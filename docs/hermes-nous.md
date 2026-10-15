@@ -26,16 +26,22 @@ Friendly names are resolved with a metadata-only command:
 
 The helper uses a fresh authenticated Nous `/models` catalog, not a hardcoded
 model alias or the proxy's synthetic `/models`. It matches model ID/name tokens,
-preserves the free constraint, and returns an exact wire ID only for one match.
-`--free-only` can also express that constraint explicitly. Explicit nonzero
-prompt/completion prices fail the free constraint even when a label says free.
-Subscription-billed and free-labeled entries are labeled as such, not treated
-as proof of actual zero billing. No availability or entitlement is inferred
-from the example name. The smoke request remains necessary.
+retains every token in the requested name, and returns an exact wire ID only
+for one match. **No price filter by default:** paid, free and subscription-backed
+targets are all supported. "Free" in a model name identifies a variant; it does
+not automatically impose a spending constraint. A named variant must not be
+replaced with some other zero-priced or subscription-backed model.
+
+Only an explicit, separate user instruction such as "free models only" enables
+`--free-only`. This optional catalog filter uses the existing label/pricing
+checks; explicit nonzero or malformed prices fail that filter. Catalog labels,
+subscription billing and zero prices are evidence, not proof of actual billing
+or entitlement. Name matching without this flag does not reject a requested
+model because its price is nonzero or unknown. The smoke request remains necessary.
 
 If multiple variants match, the operator asks only which model to use. No match,
 unavailable authentication or missing required isolation is a specific blocker,
-not an excuse to silently substitute a model, paid route, or different scope.
+not an excuse to silently substitute a model, provider, or different scope.
 Missing optional settings never start a questionnaire. Existing live session
 and profile defaults are not changed.
 
@@ -206,7 +212,7 @@ Then run --policy strict --thinking on --limit 20 --concurrency 1
 This is a 100-item, five-category run: Code must be N/A, not called a full Sixcat.
 Do not ask setup questions for settings already given. Do not read answer keys,
 answer any benchmark question yourself, repair answers, retry scored failures,
-change providers/models, use a paid fallback or run a speed/concurrency sweep.
+change providers/models, use a fallback or run a speed/concurrency sweep.
 Summarize only saved receipts, including counts, incomplete status, errors,
 policy/thinking settings, latency and usage when available. Do not invent TPS
 or claim free billing has been verified. No credentials in output.
