@@ -214,6 +214,14 @@ EvalPlus export does **not** install or run EvalPlus and does not claim a HumanE
 
 ## Hermes and stdio
 
+**Nous Portal / Hermes model qualification:** use the installed
+`python -m sixcat.hermes` runner (`sixcat-hermes` console entry point), which
+reuses Hermes authentication without exporting tokens. It provides `inspect`,
+`smoke`, `preflight`, and `run` commands, and pins the exact target provider/model.
+See [the Hermes + Nous Portal guide](docs/hermes-nous.md) for current-model,
+other-model, and non-interactive controller workflows.
+
+
 The project-local [Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) selects and verifies the target, previews settings, runs the raw provider model through an authenticated loopback proxy, and reads live receipts. It never starts, kills or replaces the actual model server. HTTP concurrency is supported through the proxy.
 
 `--transport stdio` remains a serial request/response protocol, with real response deadlines and desynchronization protection. It requires `--concurrency 1`; use HTTP for parallel requests. See [the stdio protocol](docs/harness-stdio.md). A harness must not expose answer keys, add agent tools, or quietly substitute a different model; stdio is not automatically equivalent to independent raw-model evaluation.

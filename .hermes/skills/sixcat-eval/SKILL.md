@@ -19,6 +19,36 @@ an alternate OpenAI-compatible endpoint. Ask for the target first, preview the
 exact reviewed sampling policy, keep the run observable, and report only from
 saved receipts.
 
+## Non-interactive and Nous Portal runs
+
+When the user already supplied the target, policy, scope, thinking setting,
+output path and code-execution choice, do not ask those questions again. In a
+non-interactive launch, do not call `clarify`, `hermes model`, `hermes setup`, or
+upgrade software. Missing target identity or authentication is a prerequisite
+error, not permission to switch models. Interactive setup below remains for
+requests that actually need choices.
+
+Use the Python 3.11+ interpreter containing Hermes and Sixcat, not whichever
+`python` the terminal happens to resolve. The installed entry point is
+`python -m sixcat.hermes`; `scripts/hermes_runner.py` remains a compatibility shim.
+See `docs/hermes-nous.md` for setup, smoke tests, exact commands and controller
+prompts. `inspect` resolves configuration/authentication but does not verify
+inference or that a model is free. `smoke` sends one unscored real request and
+consumes provider quota. A smoke failure is not a Sixcat benchmark score.
+
+For Nous Portal, always pin `--runtime-provider nous` and the exact model ID
+already available to the user. Do not add a `:free` suffix unless it is part of
+the actual ID. Never use provider `auto` or substitute a paid model. Default to
+concurrency 1 for quota-limited Portal routes; do not auto-tune concurrency there.
+One Hermes LLM may operate this deterministic runner against another LLM. The
+controller must not answer, edit or grade the target's responses itself, and
+must not read answer keys or `offline/answers*` into any model context.
+
+Running the same model in a fresh raw request is valid self-qualification.
+Asking an agent to read the tests/solutions and then report its own score is not.
+A full `hermes chat -q` session adds persona, memory and tools; evaluate that
+separately as an agent-assisted configuration, not the raw Sixcat leaderboard.
+
 ## 0.7.0 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
@@ -91,7 +121,8 @@ actual model server. If no target is reachable, report that prerequisite.
   reviewed model mapping exists. Custom mode may use any integer or no seed.
 - New run: use `--no-resume` and a fresh artifact basename.
 - Live status: summarize the JSONL with the bundled status helper.
-- Completion: require a final JSON result plus a zero process exit code.
+- Completion: require a final JSON result, a zero process exit code, AND full
+  scored-category counts for the requested scope; exit zero alone is not enough.
 - Release check: `scripts/check_release.py --json` before the first question.
 
 ## Procedure
@@ -112,7 +143,7 @@ thinking, release update, retry mode, and vendor-family adopt:
 
 ### 0. Check for a newer Sixcat release
 
-Before any target, retry, or sampling question, run:
+For interactive setup, before any target, retry, or sampling question, run:
 
 ```text
 terminal(
@@ -186,7 +217,9 @@ clarify(
    `/v1/chat/completions` server selected through its `/v1/models` identity.
 4. **🧜 Harness-driven stdio** — the agent itself answers Sixcat's JSONL
    `complete` requests on stdin (`--transport stdio`). Use this when the model
-   is reachable only inside the harness and has no exportable API key. Follow
+   is reachable only inside the harness and has no exportable API key. This
+   is not needed for Nous OAuth: use the raw-model bridge for Nous. Stdio is a
+   harness-assisted configuration and is not automatically comparable. Follow
    [docs/harness-stdio.md](../../../docs/harness-stdio.md): answer every request
    including the unscored policy probe, apply `request_params` to the underlying
    model call, send `finish:"length"` on truncation, and use the OpenAI
@@ -281,8 +314,10 @@ Code will be `n/a` and excluded from the overall mean.
 
 Run inspect only now. It returns JSON with one endpoint/model/provider and a
 policy preview. For another profile, replace `current` with the selected profile.
-The helper reads config through `hermes_cli.config.load_config()` and
-`hermes_cli.config.load_profiles()` instead of parsing TOML itself.
+The helper resolves the selected profile's `config.yaml` and calls Hermes'
+provider/auth resolver. It honors explicit live model/provider overrides; it
+never changes your saved default model. A sticky profile is honored when
+`HERMES_HOME` is not already set.
 
 ```text
 terminal(
@@ -339,8 +374,9 @@ terminal(
 )
 ```
 
-Read `preflight.context`, `preflight.eta`, `policy`, and `policy_fingerprint` from
-the JSON. Show served context, source field, safe input budget, ETA range with
+Read `context`, `eta`, `policy`, and `policy_fingerprint` from the preflight
+JSON. The Hermes proxy cannot attest the provider's upstream context limit;
+missing context remains unknown, and this command is not an inference test. Show served context, source field, safe input budget, ETA range with
 confidence, and warning codes. This is observe-only: it is not a score, it must
 not set `--max-minutes`, and metadata failure must not abort the run. `--ctx N`
 records an operator override as configured, not detected.

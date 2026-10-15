@@ -10,6 +10,7 @@ authors = [{ name = "Victor Cruz" }]
 
 [project.scripts]
 sixcat = "sixcat.__main__:main"
+sixcat-hermes = "sixcat.hermes:main"
 
 [build-system]
 requires = ["setuptools>=77"]
