@@ -1,3 +1,79 @@
+# SixCat 0.8.0 — Hermes and Nous Portal model qualification
+
+SixCat 0.8.0 makes Hermes-backed model evaluation a packaged, documented workflow.
+Use the same model selected in Hermes or let one Hermes LLM operate a run against
+another. Hermes handles authentication and routing; Sixcat sends fresh requests
+and grades the saved responses. No controller self-grading or agent tools are
+added to the target prompts.
+
+## New Hermes runner
+
+- Installed `python -m sixcat.hermes` and `sixcat-hermes` entry points. The
+  project-local `hermes_runner.py` remains a compatibility shim.
+- `inspect` supports `--policy` and `--policy-family`, previews the route/settings,
+  and explicitly distinguishes resolved authentication from verified inference.
+- `smoke` performs one real, unscored request before qualification. It records
+  response text, finish reason, elapsed time and available usage; it consumes
+  quota and does not prove that access is free.
+- `preflight` now exists on the Hermes runner, accepts the documented policy
+  flags and uses the same policy/thinking budget resolution as a scored run.
+- `run` pins explicit runtime provider/model settings without changing the saved
+  Hermes configuration. `current` honors sticky profiles when `HERMES_HOME` is
+  unset; explicit live flags are required to reproduce a session model override.
+- The README and `docs/hermes-nous.md` now cover same-model, cross-model, alternate
+  profile and non-interactive Hermes controller workflows.
+
+## Reliability fixes
+
+- Use Hermes' streaming auxiliary call path, which bypasses its non-stream
+  provider-fallback ladder; check the resolved route before and after collection.
+  Never retry as a non-stream auxiliary call. This is client-side route pinning,
+  not proof of Portal-internal routing, price, middleware or model weights.
+- Preserve task controls including `tool_choice`, fragmented tool-call
+  arguments, reasoning, usage and finish reasons. No real tools are executed.
+- Reject interrupted streams instead of scoring partial transport output;
+  normal completed `finish_reason=length` responses retain truncation evidence.
+- Preserve available upstream HTTP failure status codes, including rate limits.
+- Reject dot-directory profile traversal and abbreviated target overrides.
+- Fix intermittent startup failures when a randomly generated loopback token
+  begins with `-`; owned CLI settings now use `--option=value` form.
+- Keep machine-readable JSON stdout clean and make Python/dependency errors
+  actionable. Both Hermes and Sixcat must be importable under Python 3.11+.
+
+## Benchmark scope and migration
+
+The frozen 120-question default, six categories, parser v5 and first-response
+score contract are unchanged. Existing direct HTTP evaluation and the v0.7
+serving-speed suite remain available. This release does not assert that old
+Hermes-bridge receipts are identical to the repaired transport: use fresh result
+files for new qualification runs, and preserve policy/scope/provenance checks.
+
+Start with concurrency 1 for quota-limited Nous routes. Disabling code execution
+with `--skip-code-exec` yields a 100-item, five-category standard-size run with
+Code N/A, not a complete six-category score. Generated-code checking is
+host-guarded, not a security sandbox; use an appropriately isolated environment
+for the complete 120-item evaluation. Incomplete runs stay labeled incomplete;
+resume unfinished items without replacing first-response verdicts.
+
+The Hermes bridge returns complete JSON downstream, so it is not a streaming
+TTFT/speed/auto-concurrency transport. Use direct HTTP for serving-speed tests.
+The release's tests use mocks and local loopback servers, not live Nous Portal
+models. Live entitlement, price and end-to-end Portal inference remain unverified.
+
+## Validation and release scope
+
+Regression tests cover the runner commands, profile selection, exact route
+checks, stream completion/error handling, tools, clean JSON, package metadata
+and dash-prefixed credentials. CI tests Linux Python 3.11–3.14, macOS and Windows,
+with the existing 85% coverage gate. Installed-wheel smoke tests now explicitly
+exercise both Hermes entry points outside the source checkout without credentials.
+
+This release includes the Hermes integration and startup fix from PR #9, the
+expanded README/guide, synchronized package/skill version 0.8.0, and release notes.
+See the GitHub release and Actions run for final validation receipts.
+
+---
+
 # SixCat 0.7.0 — adaptive concurrency and speed telemetry
 
 ### Workload-specific speed suite

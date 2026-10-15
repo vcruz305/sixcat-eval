@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat conversationally with verified live receipts.
-version: 0.7.0
+version: 0.8.0
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -49,7 +49,7 @@ Asking an agent to read the tests/solutions and then report its own score is not
 A full `hermes chat -q` session adds persona, memory and tools; evaluate that
 separately as an agent-assisted configuration, not the raw Sixcat leaderboard.
 
-## 0.7.0 execution contract
+## 0.8.0 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
 full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
