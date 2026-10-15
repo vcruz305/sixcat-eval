@@ -207,7 +207,7 @@ def _run_main(argv: list[str]) -> int:
     p.add_argument(
         "--skip-code-exec",
         action="store_true",
-        help="Skip HumanEval model-code execution (enabled by default in a guarded host subprocess).",
+        help="Explicitly opt out of the 20 Code items (standard scope becomes 100). Local guarded Python execution is enabled by default; no container/VM required.",
     )
     p.add_argument("--out", type=Path, default=None, help="Final JSON summary.")
     p.add_argument(

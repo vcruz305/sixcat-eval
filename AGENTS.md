@@ -16,6 +16,12 @@ from the example or model name. Never guess or silently substitute another route
 The optional interactive wizard is not the default for a named target.
 
 When operating an evaluation, do not put answer keys into any model context,
-repair generated answers or let the controller grade itself. Follow the skill's
-code-isolation and incomplete-result rules. These are evaluation-operation rules,
+repair generated answers or let the controller grade itself.
+**Code execution is enabled by default.** Run all 120 items across all six
+categories, including the 20 HumanEval Code items, and execute/test their Python
+locally with the existing checker. Do not require a container, VM or separate
+isolation approval. Never add `--skip-code-exec` or substitute Code N/A unless
+the user explicitly requests skipping Code. Preserve the existing guards and
+report genuine execution errors or incomplete counts without changing scope.
+These are evaluation-operation rules,
 not a prohibition on source inspection for explicitly requested development work.

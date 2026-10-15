@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
 description: Run Sixcat from a provider and model name.
-version: 0.8.2
+version: 0.8.3
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -49,13 +49,16 @@ user input. Use an explicit user override whenever one is supplied.
 3. Use profile `current`, policy `strict`, thinking `on`, `--limit 20`,
    `--concurrency 1`, and `--max-minutes 30`, unless overridden. Generate a unique
    filesystem-safe model/timestamp RUN_ID and JSON/JSONL paths automatically.
-4. Use all six categories (120 items) when an already-approved isolated,
-   non-privileged code-execution environment is available. Otherwise use
-   `--skip-code-exec` automatically and announce **100 items, five categories,
-   Code N/A** before launch. Do not silently call that a full Sixcat. Do not
-   provision paid isolation or execute untrusted completions on an unapproved
-   host merely to avoid a question. If the user explicitly demands all six and
-   isolation is unavailable, report the prerequisite instead of changing scope.
+4. Run **all 120 items across all six categories**, including all 20 HumanEval
+   Code items. **Code execution is enabled by default.** Execute and test the
+   generated Python locally on the machine running Sixcat, using its existing
+   interpreter and guarded subprocess checker. A separate container, VM or
+   isolation approval is not a prerequisite. Do not add `--skip-code-exec`,
+   reduce the run to 100 items, or label Code N/A unless the user explicitly
+   requests skipping Code. Keep the existing timeout, temporary-directory,
+   output, environment and AST/import guards; they are not a security sandbox.
+   A real execution error or deadline produces an error/incomplete receipt,
+   not a silent switch to a five-category run.
 5. Run inspect and one smoke request against the resolved exact model/provider.
    Stop on auth, route or smoke failure. Run the benchmark with the chosen
    defaults and `--no-resume` in a fresh output path. Use tracked process/live
@@ -66,8 +69,9 @@ user input. Use an explicit user override whenever one is supplied.
    An optional release check may be informational; never downgrade a newer main
    checkout to an older tag or update software without authorization.
 
-Only a real blocker (missing authentication/installation, unavailable required
-execution mode, no model match) or genuine model ambiguity interrupts this path.
+Only a real blocker (missing authentication/installation, a local Python
+execution failure, no model match) or genuine model ambiguity interrupts this path.
+The absence of a container or VM is not a blocker for local code execution.
 A long operator prompt, exact ID supplied by the user, and manual result paths
 are **not prerequisites**. The detailed commands belong in this skill and README.
 
@@ -100,7 +104,7 @@ Asking an agent to read the tests/solutions and then report its own score is not
 A full `hermes chat -q` session adds persona, memory and tools; evaluate that
 separately as an agent-assisted configuration, not the raw Sixcat leaderboard.
 
-## 0.8.2 execution contract
+## 0.8.3 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
 full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
@@ -333,8 +337,8 @@ clarify(
     {
       'question': '🐍 HumanEval runs generated Python in a guarded host subprocess, not a security sandbox. What should Sixcat do?',
       'choices': [
-        '✅ Keep HumanEval enabled (recommended for a model I trust) — temporary process + AST/import guards + timeout',
-        '🛡️ Skip code execution — safest for an untrusted endpoint'
+        '✅ Keep HumanEval enabled (default) — run all 20 Code items locally with the existing guards and timeout',
+        '🛡️ Explicitly skip Code for this run — reduced scope, Code N/A'
       ]
     },
     {
@@ -360,8 +364,9 @@ second option-only question. Optional top-k/min-p/seed follow the same pattern.
 
 If the user chooses **Custom** size, ask one more `clarify` with `choices`:
 `5 per category`, `10 per category`, `20 per category`, `Other`. Ask for a typed
-integer only after `Other` is selected. If code execution is skipped, state that
-Code will be `n/a` and excluded from the overall mean.
+integer only after `Other` is selected. Only if the user explicitly requests
+skipping code execution, state that Code will be `n/a` and excluded from the
+overall mean. Never choose that reduced scope automatically.
 
 ### 3. Resolve the target after all answers exist
 
@@ -485,7 +490,7 @@ do not hide the process in an unmanaged shell:
 
 ```text
 terminal(
-  command='python -m sixcat --base-url <url> --model <id> --policy <policy> <scope> <optional --skip-code-exec> --out <result> --log <journal> --no-resume',
+  command='python -m sixcat --base-url <url> --model <id> --policy <policy> <scope> --out <result> --log <journal> --no-resume',
   workdir='<project-root>',
   background=true,
   notify_on_complete=true
@@ -497,7 +502,7 @@ not contain an API key:
 
 ```text
 terminal(
-  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" run --profile current --runtime-model <live-model> --runtime-provider <live-provider> -- --policy <policy> <scope> <optional --skip-code-exec> --out <result> --log <journal> --no-resume',
+  command='python "${HERMES_SKILL_DIR}/scripts/hermes_runner.py" run --profile current --runtime-model <live-model> --runtime-provider <live-provider> -- --policy <policy> <scope> --out <result> --log <journal> --no-resume',
   workdir='<project-root>',
   background=true,
   notify_on_complete=true
@@ -640,9 +645,9 @@ Keep these plain-English explanations available in the skill UI and do not repla
 - ⚖️ Compare both — strict and vendor profiles remain separate receipts.
 - ⚡ Quick — reduced per-category scope.
 - 🧭 Full — all shipped rows, still time-bounded unless explicitly uncapped.
-- 🛠️ HumanEval host-guarded execution — useful for trusted local models.
+- 🛠️ HumanEval host-guarded execution — default local execution of all 20 Code items.
 - 🧪 Standard benchmark — the short daily-driver run.
-- 🛡️ `--skip-code-exec` — disable generated-code execution for untrusted endpoints.
+- 🛡️ `--skip-code-exec` — opt out of Code only when explicitly requested by the user.
 - 🚫 Generated code execution is not a security sandbox.
 - 🌡️ Thinking controls whether the model's reasoning mode is requested.
 - 5️⃣ Five items per category and 🔟 ten items per category are small custom scopes.

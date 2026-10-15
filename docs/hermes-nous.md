@@ -11,10 +11,13 @@ Run sixcat eval against the Hermes provider nous portal and the model Nemotron u
 Or `/sixcat-eval nous portal Nemotron ultra free`. The operator instructions
 below are reference material, **not a prompt the user must repeat**. The skill
 uses strict sampling, thinking on, 20 items per category, concurrency 1 and a
-30-minute run cap. Output names are generated automatically. Use 120 items
-with an already-approved isolated code environment; otherwise announce and run
-100 items with Code N/A. An explicit demand for all six must not be silently
-reduced when the required execution environment is missing.
+30-minute run cap. Output names are generated automatically.
+**Code execution is enabled by default.** Run all 120 items across all six
+categories, including 20 HumanEval Code items executed and tested locally on
+the machine running Sixcat. A container, VM or separate isolation approval is
+not required. Do not add `--skip-code-exec` or reduce the scope unless the user
+explicitly requests skipping Code. Genuine execution failures stay visible as
+errors/incomplete results, not an automatic 100-item / Code N/A fallback.
 
 Friendly names are resolved with a metadata-only command:
 
@@ -40,7 +43,7 @@ or entitlement. Name matching without this flag does not reject a requested
 model because its price is nonzero or unknown. The smoke request remains necessary.
 
 If multiple variants match, the operator asks only which model to use. No match,
-unavailable authentication or missing required isolation is a specific blocker,
+unavailable authentication or an actual local Python execution failure is a specific blocker,
 not an excuse to silently substitute a model, provider, or different scope.
 Missing optional settings never start a questionnaire. Existing live session
 and profile defaults are not changed.
@@ -151,14 +154,14 @@ The proxy's `/models` entry pins local routing; it is not the upstream catalog.
 Upstream context/ETA may therefore be unknown. Do not replace unknown fields with
 advertised maximums or confuse this metadata check with the smoke test.
 
-A small initial check without generated-code execution (10 scored questions,
-five categories, **not** the full six-category benchmark):
+Only when the user requests a smaller screening run (12 scored questions,
+all six categories including local Code execution, **not** the standard 120):
 
 ```bash
 "$HERMES_PYTHON" -m sixcat.hermes run \
   --profile current --runtime-provider nous --runtime-model "$MODEL" -- \
   --policy strict --thinking on --limit 2 --concurrency 1 \
-  --max-minutes 5 --skip-code-exec \
+  --max-minutes 5 \
   --artifact-id nous-model-screen-01 --out results/nous-model-screen-01.json \
   --no-resume
 ```
@@ -174,11 +177,12 @@ Standard full six-category qualification, with one fresh first response per task
   --no-resume
 ```
 
-**Generated-code safety:** standard mode executes HumanEval completions in a
-host-guarded subprocess, not a security sandbox. Use a separately isolated,
-non-privileged environment for untrusted generated code. Otherwise keep
-`--skip-code-exec` and label Code N/A; that standard-size run has 100 scored items
-and is not comparable to a complete 120-item six-category result.
+**Local Code execution:** standard mode executes and tests all 20 HumanEval
+completions in a temporary host-guarded subprocess using Sixcat's Python
+interpreter. The existing timeout, output limits and AST/import guards remain.
+This is not a security sandbox; extra isolation is optional, not a prerequisite.
+Use `--skip-code-exec` only when the user explicitly opts out. Only that reduced
+scope has 100 scored items and Code N/A; never use it as an automatic fallback.
 
 Start with concurrency 1 on free/quota-limited routes. `--policy strict` fixes
 sampling at temperature zero but does not guarantee deterministic provider
@@ -207,9 +211,11 @@ Do not switch my current session model or change persisted configuration.
 Run inspect with strict policy, then one smoke request. Stop and report the
 actual error if authentication, route verification or the smoke test fails.
 Then run --policy strict --thinking on --limit 20 --concurrency 1
---max-minutes 30 --skip-code-exec --artifact-id TARGET_RUN_ID
+--max-minutes 30 --artifact-id TARGET_RUN_ID
 --out results/TARGET_RUN_ID.json --no-resume.
-This is a 100-item, five-category run: Code must be N/A, not called a full Sixcat.
+Run all 120 items across six categories. Execute and test the 20 Code items
+locally using Sixcat's existing Python checker. Do not skip Code or require a
+separate container/VM. Report its measured score and correct/scored counts.
 Do not ask setup questions for settings already given. Do not read answer keys,
 answer any benchmark question yourself, repair answers, retry scored failures,
 change providers/models, use a fallback or run a speed/concurrency sweep.
@@ -218,9 +224,9 @@ policy/thinking settings, latency and usage when available. Do not invent TPS
 or claim free billing has been verified. No credentials in output.
 ```
 
-Remove `--skip-code-exec` only after arranging appropriate execution isolation;
-then specify 120 items/six categories in the instruction. For a non-interactive
-controller, save the filled-in instruction to a file and use Hermes' real CLI:
+The standard instruction includes all 120 items and local Code execution.
+For a non-interactive controller, save the filled-in instruction to a file
+and use Hermes' real CLI:
 
 ```bash
 hermes chat --provider nous --model "$CONTROLLER_MODEL" \

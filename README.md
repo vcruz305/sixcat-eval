@@ -6,7 +6,7 @@
 
 SixCat is a daily regression check for local models, quantizations and provider-served models, not another benchmark that takes all afternoon. Standard mode keeps the frozen `challenge-v1` selection: 20 items in each category, with the hardest-first ordering retained within each category. Categories dispatch round-robin through one bounded concurrent pool so a time-limited run does not finish Knowledge and Math while never reaching Tools.
 
-**Current release: [v0.8.2 — One-line Hermes model evaluation](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.2).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
+**Current release: [v0.8.3 — All 120 items with local Code execution](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.3).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
 
 [HTTP quick start](#run-the-short-benchmark) · [Hermes / Nous Portal](#hermes-and-nous-portal) · [Serving speed](#adaptive-concurrency-and-serving-speed-benchmark) · [Score contract](#score-contract) · [Release notes](RELEASE_NOTES.md)
 
@@ -67,10 +67,11 @@ only" (`--free-only`). Do not silently substitute any different model or variant
 It asks only when a real model ambiguity or blocker requires your input.
 
 Defaults are strict sampling, thinking on, 20 items per category, concurrency 1,
-a 30-minute run cap, and unique result paths. All six categories run when an
-already-approved isolated code environment is available; otherwise the agent
-announces and runs **100 items / five categories / Code N/A** without asking a
-setup questionnaire. Explicit user settings override these defaults.
+a 30-minute run cap, and unique result paths. **Code execution is enabled by default.** Run **all 120 items across all six categories**, including 20 HumanEval
+Code items tested locally on the machine running Sixcat. No container, VM or
+separate isolation approval is required. Do not automatically add
+`--skip-code-exec` or substitute a 100-item / Code N/A run. Skipping Code is an
+explicit user opt-out only; other explicit settings also override defaults.
 
 The instructions must be discoverable: load the updated project skill from a
 trusted checkout, or install/update the skill in your Hermes profile. A README
@@ -94,7 +95,7 @@ HERMES_PYTHON="/absolute/path/to/hermes-agent/venv/bin/python"
 ```
 
 To pin the release without a source checkout, install
-`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.2` into that same environment.
+`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.3` into that same environment.
 The [project-local Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) remains
 available: start Hermes in the checkout and trust its project skills with
 `hermes skills trust`. The old `scripts/hermes_runner.py` entry point remains
@@ -133,17 +134,20 @@ After a successful smoke test, start conservatively with one concurrent request:
 "$HERMES_PYTHON" -m sixcat.hermes run \
   --profile current --runtime-provider nous --runtime-model "$MODEL" -- \
   --policy strict --thinking on --limit 20 --concurrency 1 \
-  --max-minutes 30 --skip-code-exec \
+  --max-minutes 30 \
   --artifact-id nous-candidate-01 --out results/nous-candidate-01.json \
   --no-resume
 ```
 
-**This requests 100 scored items across five categories, with Code N/A.** For the
-standard **120-item, six-category** run, remove `--skip-code-exec` only after
-arranging suitable isolation for generated-code execution. The host-guarded
-HumanEval checker is **not a security sandbox**. A smaller screening run can use
-`--limit 2 --max-minutes 5`; with code disabled that is only 10 scored questions,
-not a full qualification result.
+**This requests all 120 scored items across six categories, including Code.**
+Generated Python is executed and tested locally with the existing HumanEval
+checker, temporary directories, timeouts and guards. The checker is **not a
+security sandbox**, but a separate sandbox is not a prerequisite for this mode.
+Do not silently reduce the scope after an execution error; report the actual
+error or incomplete counts. Only an explicit `--skip-code-exec` request reduces
+standard scope to 100 items with Code N/A. An explicitly requested smaller
+screening run can use `--limit 2 --max-minutes 5`: 12 items including Code,
+not the standard 120-item qualification.
 
 Optional `preflight` estimates context without making a model inference call:
 
@@ -393,7 +397,7 @@ EvalPlus export does **not** install or run EvalPlus and does not claim a HumanE
 
 ## Code execution and safety
 
-HumanEval runs code in a temporary guarded host subprocess: AST/import restrictions, an 8-second maximum further bounded by the invocation deadline, a randomized harness-owned success receipt, bounded stdout, and best-effort Unix CPU/memory/file-size limits. **This is not a security sandbox.** Use `--skip-code-exec` for untrusted generated code or run the whole benchmark in a separately isolated environment. Code-disabled results have a different comparison scope.
+HumanEval runs code in a temporary guarded host subprocess: AST/import restrictions, an 8-second maximum further bounded by the invocation deadline, a randomized harness-owned success receipt, bounded stdout, and best-effort Unix CPU/memory/file-size limits. **This is not a security sandbox.** Local execution is enabled by default and does not require a separate container or VM. Extra isolation is optional; retain the existing guards rather than automatically disabling Code. Use `--skip-code-exec` only when explicitly requested. Code-disabled results have a different comparison scope.
 
 ## Development and CI
 
