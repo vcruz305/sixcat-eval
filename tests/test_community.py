@@ -177,3 +177,10 @@ def test_private_provider_model_path_is_omitted_without_editing_answers(raw_resu
     projected=e.project_result(raw_result)
     assert 'provider_model' not in projected['items']['code'][0]
     assert projected['items']['code'][0]['raw_text']==raw_result['items']['code'][0]['raw_text']
+
+
+def test_machine_readable_schema_matches_public_export(public_doc):
+    from jsonschema import Draft202012Validator
+    schema=json.loads((Path(__file__).resolve().parents[1]/'sixcat/community.schema.json').read_text())
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(public_doc)

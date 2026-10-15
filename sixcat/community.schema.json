@@ -180,6 +180,905 @@
       "const": "contributor-reported"
     },
     "result": {
+      "$ref": "#/$defs/result"
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "original_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "reasoning_included": {
+          "type": "boolean"
+        },
+        "answers_included": {
+          "const": true
+        },
+        "omitted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "original_sha256",
+        "reasoning_included",
+        "answers_included",
+        "omitted"
+      ]
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "run_id",
+    "run_at",
+    "contributor",
+    "metadata",
+    "metadata_evidence",
+    "result",
+    "export",
+    "content_sha256"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sixcat community result v1",
+  "description": "Public data only. Additional semantic checks use trusted compatibility manifests, scores, fingerprints and canonical filenames. Never execute submitted code.",
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "knowledge": {
+          "type": "integer",
+          "const": 20
+        },
+        "math": {
+          "type": "integer",
+          "const": 20
+        },
+        "truth": {
+          "type": "integer",
+          "const": 20
+        },
+        "instruct": {
+          "type": "integer",
+          "const": 20
+        },
+        "code": {
+          "type": "integer",
+          "const": 20
+        },
+        "tools": {
+          "type": "integer",
+          "const": 20
+        }
+      },
+      "required": [
+        "knowledge",
+        "math",
+        "truth",
+        "instruct",
+        "code",
+        "tools"
+      ]
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "knowledge": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "math": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "truth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "instruct": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "code": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tools": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "knowledge",
+        "math",
+        "truth",
+        "instruct",
+        "code",
+        "tools"
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "top_p": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "top_k": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min_p": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "enum": [
+            "strict",
+            "vendor",
+            "custom"
+          ]
+        },
+        "thinking": {
+          "type": "boolean"
+        },
+        "budgets": {
+          "$ref": "#/$defs/budgets"
+        },
+        "extra": {
+          "$ref": "#/$defs/parameters"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "name",
+        "thinking",
+        "budgets",
+        "extra",
+        "source"
+      ]
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "max_completion_tokens": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "min_p": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "presence_penalty": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "frequency_penalty": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "repetition_penalty": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "enable_thinking": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "preclose_think": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      },
+      "required": []
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cat": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "scored": {
+          "const": true
+        },
+        "status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "attempt": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "ts": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "segment_id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "raw_text": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "reasoning_content": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "finish": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "ctok": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "ptok": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "rtok": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "atok": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "loop": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "parse_confidence": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "parse_status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "wall_s": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "wall_tps": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "provider_model": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "prefill_tps": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "decode_tps": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "prefill_ms": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "decode_ms": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "prefill_n": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "decode_n": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "speed_source": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "request_params": {
+          "$ref": "#/$defs/parameters"
+        },
+        "tool_calls": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "function": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "arguments": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "arguments"
+                ]
+              }
+            },
+            "required": [
+              "function"
+            ]
+          }
+        },
+        "generation_reused": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "ok",
+        "raw_text",
+        "scored",
+        "request_params"
+      ]
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "n": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "truncated": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "trunc_in_think": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "empty_answer": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "loop_failures": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parse_high_confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parse_low_confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parse_confidence_not_applicable": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parse_confidence_missing": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ctok_p50": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ctok_p95": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ctok_max": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rtok_sum": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "atok_sum": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rtok_p50": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "atok_p50": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "speed_n": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prefill_tps_p50": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prefill_tps_p95": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "decode_tps_p50": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "decode_tps_p95": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tps_n": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tps_mean": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "total_ctok": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "total_wall_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "suite_tps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": []
+    },
+    "result": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -319,393 +1218,10 @@
           ]
         },
         "expected_n": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "knowledge": {
-              "type": "integer",
-              "const": 20
-            },
-            "math": {
-              "type": "integer",
-              "const": 20
-            },
-            "truth": {
-              "type": "integer",
-              "const": 20
-            },
-            "instruct": {
-              "type": "integer",
-              "const": 20
-            },
-            "code": {
-              "type": "integer",
-              "const": 20
-            },
-            "tools": {
-              "type": "integer",
-              "const": 20
-            }
-          },
-          "required": [
-            "knowledge",
-            "math",
-            "truth",
-            "instruct",
-            "code",
-            "tools"
-          ]
+          "$ref": "#/$defs/counts"
         },
         "policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "temperature": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "top_p": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "top_k": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "min_p": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "name": {
-              "enum": [
-                "strict",
-                "vendor",
-                "custom"
-              ]
-            },
-            "thinking": {
-              "type": "boolean"
-            },
-            "budgets": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "knowledge": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "math": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "truth": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "instruct": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "code": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "tools": {
-                  "type": "integer",
-                  "minimum": 1
-                }
-              },
-              "required": [
-                "knowledge",
-                "math",
-                "truth",
-                "instruct",
-                "code",
-                "tools"
-              ]
-            },
-            "extra": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "temperature": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "max_tokens": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "max_completion_tokens": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "top_p": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "top_k": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "min_p": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "seed": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "presence_penalty": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "frequency_penalty": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "repetition_penalty": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "stop": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "reasoning_effort": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "enable_thinking": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                },
-                "preclose_think": {
-                  "anyOf": [
-                    {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    }
-                  ]
-                }
-              },
-              "required": []
-            },
-            "source": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "temperature",
-            "top_p",
-            "top_k",
-            "min_p",
-            "name",
-            "thinking",
-            "budgets",
-            "extra",
-            "source"
-          ]
+          "$ref": "#/$defs/policy"
         },
         "policy_source": {
           "type": [
@@ -732,42 +1248,7 @@
           ]
         },
         "budgets": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "knowledge": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "math": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "truth": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "instruct": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "code": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "tools": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "knowledge",
-            "math",
-            "truth",
-            "instruct",
-            "code",
-            "tools"
-          ]
+          "$ref": "#/$defs/budgets"
         },
         "parser": {
           "type": [
@@ -875,1018 +1356,22 @@
           "additionalProperties": false,
           "properties": {
             "knowledge": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             },
             "math": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             },
             "truth": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             },
             "instruct": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             },
             "code": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             },
             "tools": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "score": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "truncated": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "trunc_in_think": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "empty_answer": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "loop_failures": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_high_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_low_confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_not_applicable": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "parse_confidence_missing": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "ctok_max": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_sum": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "rtok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "atok_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "speed_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "prefill_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p50": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "decode_tps_p95": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_n": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "tps_mean": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_ctok": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "total_wall_s": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "suite_tps": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                }
-              },
-              "required": []
+              "$ref": "#/$defs/stats"
             }
           },
           "required": [
@@ -1931,42 +1416,7 @@
           }
         },
         "n": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "knowledge": {
-              "type": "integer",
-              "const": 20
-            },
-            "math": {
-              "type": "integer",
-              "const": 20
-            },
-            "truth": {
-              "type": "integer",
-              "const": 20
-            },
-            "instruct": {
-              "type": "integer",
-              "const": 20
-            },
-            "code": {
-              "type": "integer",
-              "const": 20
-            },
-            "tools": {
-              "type": "integer",
-              "const": 20
-            }
-          },
-          "required": [
-            "knowledge",
-            "math",
-            "truth",
-            "instruct",
-            "code",
-            "tools"
-          ]
+          "$ref": "#/$defs/counts"
         },
         "items": {
           "type": "object",
@@ -1977,541 +1427,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             },
             "math": {
@@ -2519,541 +1435,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             },
             "truth": {
@@ -3061,541 +1443,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             },
             "instruct": {
@@ -3603,541 +1451,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             },
             "code": {
@@ -4145,541 +1459,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             },
             "tools": {
@@ -4687,541 +1467,7 @@
               "minItems": 20,
               "maxItems": 20,
               "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cat": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "key": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "scored": {
-                    "const": true
-                  },
-                  "status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "attempt": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ts": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "segment_id": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "raw_text": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "reasoning_content": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "finish": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ctok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "ptok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "rtok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "atok": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "loop": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_confidence": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "parse_status": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_s": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "wall_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "provider_model": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_tps": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_ms": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "prefill_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "decode_n": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "speed_source": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "request_params": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "temperature": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "max_completion_tokens": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "top_k": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "min_p": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "seed": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "presence_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "frequency_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "repetition_penalty": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "stop": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "reasoning_effort": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "enable_thinking": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "preclose_think": {
-                        "anyOf": [
-                          {
-                            "type": [
-                              "string",
-                              "number",
-                              "boolean",
-                              "null"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    "required": []
-                  },
-                  "tool_calls": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "function": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "arguments": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "arguments"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "function"
-                      ]
-                    }
-                  },
-                  "generation_reused": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "key",
-                  "ok",
-                  "raw_text",
-                  "scored",
-                  "request_params"
-                ]
+                "$ref": "#/$defs/row"
               }
             }
           },
@@ -5367,52 +1613,6 @@
         "concurrency",
         "execution_segments"
       ]
-    },
-    "export": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "original_sha256": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "reasoning_included": {
-          "type": "boolean"
-        },
-        "answers_included": {
-          "const": true
-        },
-        "omitted": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "original_sha256",
-        "reasoning_included",
-        "answers_included",
-        "omitted"
-      ]
-    },
-    "content_sha256": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
     }
-  },
-  "required": [
-    "schema",
-    "run_id",
-    "run_at",
-    "contributor",
-    "metadata",
-    "metadata_evidence",
-    "result",
-    "export",
-    "content_sha256"
-  ],
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Sixcat community result v1",
-  "description": "Public data only. Additional semantic checks use trusted compatibility manifests, scores, fingerprints and canonical filenames. Never execute submitted code."
+  }
 }
