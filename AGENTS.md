@@ -25,3 +25,9 @@ the user explicitly requests skipping Code. Preserve the existing guards and
 report genuine execution errors or incomplete counts without changing scope.
 These are evaluation-operation rules,
 not a prohibition on source inspection for explicitly requested development work.
+
+After a completed standard 120-item run, follow the skill Community Results
+section: offer Submit PR / Preview submission / Keep private. Low scores are
+eligible. Only explicit publication approval authorizes `sixcat submit --yes`.
+Use the deterministic exporter/PR helper; no handwritten scores, no raw private
+JSON uploads, no automatic merge, and no release creation. See community/README.md.

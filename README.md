@@ -210,6 +210,36 @@ billing entitlement was verified during this release's mock/loopback tests.
 The [full Hermes + Nous Portal guide](docs/hermes-nous.md) includes setup,
 troubleshooting, exact commands and a copyable controller prompt.
 
+## Community Results
+
+**Unreleased on `main`.** After a completed standard run, submit a public result
+only with your approval: **Submit PR · Preview submission · Keep private**.
+All 120 questions, including local Code execution, remain the default.
+
+Each contribution adds one allowlisted results JSON and its generated table row.
+Model/source, quant format and precision, inference engine, API wrapper, versions,
+policy/thinking settings, all six scores and the GitHub contributor are recorded.
+Unknown cloud backend details remain undisclosed, not guessed. The original local
+JSON and journal remain untouched. [Workflow, metadata, privacy and review rules](community/README.md).
+
+```bash
+python -m sixcat submit results/model.json --preview --github-user YOUR_USERNAME
+python -m sixcat submit results/model.json --export-dir results/submission --github-user YOUR_USERNAME
+# Only after approving public sharing:
+python -m sixcat submit results/submission/EXPORTED_FILE.json --yes
+```
+
+**Community-reported: format and arithmetic consistency checked, not independent
+model/weight verification.** Rows are grouped by benchmark, policy and thinking
+settings. Low scores are welcome; selective best-only reporting is discouraged.
+K / M / T / I / C / Tools means Knowledge, Math, Truth, Instruct, Code and Tools.
+
+<!-- SIXCAT-COMMUNITY:START -->
+
+No community results submitted yet.
+
+<!-- SIXCAT-COMMUNITY:END -->
+
 ## Adaptive concurrency and serving-speed benchmark
 
 SixCat 0.7 can measure an already-running inference server before the scored run and select a concurrency level automatically.

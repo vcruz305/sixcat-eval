@@ -1,5 +1,7 @@
 # SixCat 0.8.3 — all 120 items with local Code execution
 
+> **Unreleased on main:** Community Results export, opt-in PR submission, generated README table and trusted-base validation. No version bump, tag or release has been created for this work. See [community/README.md](community/README.md).
+
 Restore the requested standard scope for one-line Hermes evaluations:
 **120 scored items, six categories, including all 20 HumanEval Code items.**
 

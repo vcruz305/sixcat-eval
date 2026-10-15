@@ -1,0 +1,53 @@
+name: Community Results validation
+
+on:
+  pull_request:
+    paths:
+      - 'community/results/**'
+      - 'README.md'
+      - 'sixcat/community*.py'
+      - 'sixcat/community*.json'
+      - '.github/workflows/community-results.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  public-results:
+    name: Trusted-base public result validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Validate data with the base branch implementation
+        working-directory: trusted
+        run: |
+          if test -f sixcat/community_check.py; then
+            python -m sixcat.community_check validate --root "$GITHUB_WORKSPACE/candidate" --base "$GITHUB_WORKSPACE/trusted" --pr-author "$PR_AUTHOR"
+          else
+            # Bootstrap only: never run candidate validator code. No score JSON
+            # may enter before the trusted validator is present on main.
+            python - <<'PY'
+          import os
+          from pathlib import Path
+          results = Path(os.environ['GITHUB_WORKSPACE']) / 'candidate/community/results'
+          if results.exists() and any(results.rglob('*.json')):
+              raise SystemExit('Community validator must land on main before score submissions')
+          print('Validator bootstrap: no public score submissions; candidate code was not run')
+          PY
+          fi

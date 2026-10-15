@@ -63,6 +63,8 @@ user input. Use an explicit user override whenever one is supplied.
    Stop on auth, route or smoke failure. Run the benchmark with the chosen
    defaults and `--no-resume` in a fresh output path. Use tracked process/live
    status tools and report the saved results, errors and completion counts.
+   Then follow the Public Community Results section: ask once about publication,
+   never publish without explicit approval.
 6. Never read answer keys into model context, answer tasks yourself, alter
    completions, substitute providers, or rerun scored failures to inflate scores.
    No speed/auto-concurrency sweep, release-upgrade dialogue or setup form.
@@ -564,13 +566,15 @@ After process exit:
    missing split remains `n/a`.
 6. For `both`, report vendor-minus-strict and preserve both artifact paths.
 
-A run with timeout, truncation, missing confidence, identity drift, duplicate
-rows, or a failed probe request is incomplete or non-comparable. Hidden or
-unrevealed thinking traces are not a probe failure. Keep the files and label
-the failure honestly.
+Missing tasks, unresolved infrastructure errors, identity drift, duplicate rows
+or a failed probe prevent publication as a complete result. Normally completed
+truncated or incorrectly answered items retain their first-response verdicts and
+warnings; they do not make an otherwise complete 120-item run ineligible. Hidden
+or unrevealed thinking traces are not a probe failure. Keep the files and flags.
 
-If `timed_out` is true or `continuation.remaining` / `continuation.failed` is
-nonzero, immediately ask one option-only `clarify`. Do not suggest a full
+If `timed_out` is true or `continuation.remaining` is nonzero, ask one
+option-only `clarify`. For completed 120-item runs, offer Community Results
+before optional failure-retry diagnostics; wrong answers do not block publication. Do not suggest a full
 `--no-resume` rerun. Reuse the same `--out` and `--log`, omit `--no-resume`,
 and add one `--retry` flag so the new rows merge into the existing receipt:
 
@@ -582,6 +586,46 @@ and add one `--retry` flag so the new rows merge into the existing receipt:
 
 Offer only the choices that apply. After that pass, report the immutable first-response overall
 from the rewritten JSON and label `diagnostics.overall` separately as a latest-attempt diagnostic, never pass@1. Include `continuation.failed_rescored`.
+
+
+### Public Community Results after completion
+
+After reporting an eligible completed standard run, offer **Submit PR**, **Preview
+submission**, and **Keep private** using one `clarify` with choices. Low scores
+are eligible: wrong answers are not missing items. Do not ask a failure-retry
+question instead merely because some scored answers were wrong. The complete
+120-item first-response result, including all 20 locally executed Code items,
+remains the default; never submit a reduced or incomplete run to the primary table.
+
+Read `community/README.md`. Invoke `python -m sixcat submit <result> --preview`
+with the known GitHub username and public runtime metadata. Fill model/source,
+quantization, engine and wrapper from saved receipts and the known launch context;
+ask only for genuinely missing source/identity, and use Unknown/Undisclosed for
+unavailable backend details. Preserve exact model IDs and separate the evaluation
+client/controller from the inference engine and API wrapper. Do not infer prices,
+weights, hardware or engine versions.
+
+Explain that the public PR contains model/configuration details, GitHub username
+and the saved first answers. Dedicated reasoning fields are omitted by default;
+inline text in saved answers is not rewritten. Preview the exported JSON, not the
+raw local result with its endpoint/profile/path fields. Never publish a credential
+or silently edit scored answers to redact them. `--include-reasoning` requires
+explicit approval to include those additional fields.
+
+Only after the user selects Submit PR (or explicitly requested publication with
+the evaluation), call `python -m sixcat submit <result-or-export> --yes` with the
+same metadata. `--yes` records consent to this publication; never supply it merely
+because the user requested an evaluation. The deterministic helper creates a new
+branch/fork when required and opens the PR; it does not merge it. Report its actual
+URL. GitHub authentication is not a prerequisite to run the benchmark: when gh is
+unavailable, retain an offline export and report the submission prerequisite.
+
+Do not handwrite scores, README rows, or filenames. The helper generates a stable
+MODEL__SOURCE__QUANT__USER__UTC__RUN-ID name, checks the approved benchmark manifest,
+first-response totals, duplicate runs and README consistency. Keep original files
+untouched. For non-interactive runs without explicit publication approval, save
+an offline submission package/draft; do not block for input, read GitHub auth or
+upload. Keep private means no publication and no repeated submission prompts.
 
 ## Additional Guardrails
 

@@ -17,3 +17,7 @@ junit.xml
 .ruff_cache/
 wheelhouse/
 *.jsonl.lock
+
+# Public result receipts are intentionally tracked; local results remain ignored.
+!community/results/
+!community/results/**
