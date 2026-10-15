@@ -265,3 +265,12 @@ Hermes upstream `0ab8010b3c211ff323fd8602ff0fbdfc4d96cb1b`.
 Official Hermes docs: https://hermes-agent.nousresearch.com/docs/user-guide/cli/
 and https://hermes-agent.nousresearch.com/docs/guides/run-hermes-with-nous-portal.
 Mock/local tests do not establish that any particular live Portal model works.
+
+## Optional public results
+
+After all 120 questions are scored, the skill asks whether to publish a
+Community Results PR. No extra evaluation prompt is needed. Publication requires
+an explicit yes, preserves the original JSON/journal, and uses a public export
+with model/source/quant/engine/wrapper metadata. Low scores are eligible. See
+[the submission guide](../community/README.md) for preview/export commands and
+privacy details. This feature is unreleased on main; v0.8.3 does not contain it.

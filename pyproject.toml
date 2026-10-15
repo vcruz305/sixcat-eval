@@ -21,3 +21,5 @@ include = ["sixcat*"]
 
 [tool.setuptools.package-data]
 sixcat = ["model-policies.json", "data/*.jsonl"]
+
+"*" = ["community-compatibility.json", "community.schema.json"]

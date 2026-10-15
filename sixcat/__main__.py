@@ -103,6 +103,9 @@ def _slim_result(result: dict, log_path: Path) -> dict:
     """
     saved = copy.deepcopy(result)
     saved["log"] = str(log_path)
+    from .community_runtime import current
+    if current.get():
+        saved["community_metadata"] = dict(current.get())
     return saved
 
 
@@ -440,6 +443,11 @@ def _run_main(argv: list[str]) -> int:
         print(render_table(result))
         if out_path is not None:
             _write_result(result, out_path, log_path)
+            if args.transport == "openai" and not os.environ.get("SIXCAT_NO_SUBMISSION_PROMPT"):
+                from .submit import after_run
+                from .community_runtime import current
+                after_run(result, out_path, interactive=(not current.get() and args.policy != "both"
+                          and sys.stdin.isatty() and sys.stdout.isatty()))
     if args.policy == "both":
         try:
             combined = render_both_table(completed_results["strict"], completed_results["vendor"])
@@ -616,6 +624,12 @@ def _preflight_main(argv: list[str]) -> int:
 
 def _dispatch(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "submit":
+        from .submit import main as submit_main
+        return submit_main(args[1:])
+    if args and args[0] == "community":
+        from .community_check import main as community_main
+        return community_main(args[1:])
     if args and args[0] in {"rescore", "export-evalplus"}:
         from .offline import main as offline_main
         return offline_main(args[1:], export=args[0] == "export-evalplus")

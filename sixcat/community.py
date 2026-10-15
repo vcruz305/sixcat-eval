@@ -136,6 +136,9 @@ def validate_result(result, registry=None):
             "Policy fingerprint/source does not match settings")
     require(dict(p.budgets) == result["budgets"], "Budget metadata disagrees with the policy")
     require(p.name in {"strict", "vendor", "custom"}, "Invalid policy profile")
+    if p.name == "strict":
+        require(p.temperature == 0 and p.top_p is None and p.top_k is None and p.min_p is None,
+                "Strict profile must use strict sampling settings")
     require(type(result.get("concurrency")) is int and result["concurrency"] >= 1, "Invalid concurrency")
     segments = result.get("execution_segments")
     require(isinstance(segments, list) and 0 < len(segments) <= 1000, "Missing execution segments/run identity")

@@ -643,7 +643,8 @@ def _main(argv: list[str] | None = None) -> int:
     # Keep machine-readable --json output clean.
     print("HERMES_TARGET " + json.dumps(public_target_receipt(target), ensure_ascii=False),
           file=sys.stderr, flush=True)
-    with proxy_server(target, call_llm_fn=call_llm) as proxy:
+    from .community_runtime import runtime_metadata
+    with runtime_metadata(target), proxy_server(target, call_llm_fn=call_llm) as proxy:
         command = ["preflight"] if args.command == "preflight" else []
         return sixcat_main([*command, f"--base-url={proxy.base_url}", f"--model={target.model}",
                             f"--api-key={proxy.api_key}", *forwarded])

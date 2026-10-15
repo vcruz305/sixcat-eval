@@ -17,6 +17,16 @@ from .score import CATEGORIES
 def default_metadata(result):
     supplied = result.get("community_metadata") or {}
     meta = {k: supplied[k] for k in META_FIELDS if k in supplied} if isinstance(supplied, dict) else {}
+    # Older Hermes receipts used loopback but recorded the upstream provider in
+    # synthetic model metadata. Do not mislabel those as local/self-hosted.
+    models = (result.get("server_props") or {}).get("openai_models") or {}
+    rows = models.get("data", []) if isinstance(models, dict) else []
+    matched = [r for r in rows if isinstance(r, dict) and r.get("id") == result.get("model")
+               and r.get("target_kind") == "hermes_runtime_model" and r.get("hermes_provider")]
+    if len(matched) == 1 and not meta.get("source_kind"):
+        provider = matched[0]["hermes_provider"]
+        meta.update(source_kind="local" if provider in {"custom", "ollama", "vllm", "llamacpp"} else "cloud",
+                    source=provider, api_wrapper="Hermes raw-model bridge", evaluation_client="Sixcat Hermes bridge")
     meta.setdefault("model_name", result.get("model", "Unknown"))
     if not meta.get("source_kind"):
         host = urlsplit(str(result.get("base_url") or "")).hostname or ""
@@ -73,17 +83,28 @@ def project_result(raw, include_reasoning=False):
     r = {k: copy.deepcopy(raw[k]) for k in RESULT_FIELDS if k in raw}
     r["items"] = {c: [{k: copy.deepcopy(row[k]) for k in ROW_FIELDS if k in row
                        and (k != "reasoning_content" or include_reasoning)} for row in raw["items"][c]] for c in CATEGORIES}
+    for rows in r["items"].values():
+        for row in rows:
+            if isinstance(row.get("provider_model"), str) and PRIVATE.search(row["provider_model"]):
+                row.pop("provider_model")
+    from .community_shape import STATS
+    r["stats"] = {c: {k: v for k, v in raw["stats"][c].items() if k in STATS} for c in CATEGORIES}
     r["execution_segments"] = [{k: s[k] for k in SEGMENT_FIELDS if k in s} for s in raw["execution_segments"]]
     return r
 
 
 def run_identity(result):
     # Filename, contributor, export date and optional reasoning do not create new runs.
-    identity = copy.deepcopy(result)
-    for rows in identity["items"].values():
+    items = copy.deepcopy(result["items"])
+    for rows in items.values():
         for row in rows:
             row.pop("reasoning_content", None)
-    return fingerprint(identity)
+    # Diagnostic retry sessions do not create new first-response evidence.
+    # First-row timestamps/segment IDs distinguish genuine independent runs.
+    return fingerprint({"model": result["model"],
+        "benchmark": result["benchmark_fingerprint"], "policy": result["policy_fingerprint"],
+        "attempt_policy": result["attempt_policy"], "items": items})
+
 
 
 def slug(value, limit=48):
@@ -137,6 +158,8 @@ def validate_public(doc, *, registry=None):
     r = doc["result"]
     object_keys(r, RESULT_FIELDS)
     validate_result(r, registry)
+    from .community_shape import validate_nested
+    validate_nested(r)
     require(not PRIVATE.search(r["model"]), "Private model path; do not publish private identifiers")
     for c in CATEGORIES:
         for row in r["items"][c]:
@@ -149,6 +172,7 @@ def validate_public(doc, *, registry=None):
     require(type(doc["export"]["reasoning_included"]) is bool and doc["export"]["answers_included"] is True, "Missing export disclosure")
     if not doc["export"]["reasoning_included"]:
         require(all("reasoning_content" not in row for rows in r["items"].values() for row in rows), "Undisclosed reasoning text")
+    require(isinstance(doc["export"]["omitted"], list) and all(isinstance(s, str) and len(s) < 100 for s in doc["export"]["omitted"]), "Invalid omission disclosure")
     require(doc["run_id"] == run_identity(r), "Run identity mismatch")
     require(doc["content_sha256"] == fingerprint({k: v for k, v in doc.items() if k != "content_sha256"}), "Public checksum mismatch")
 

@@ -53,6 +53,7 @@ jobs:
         run: |
           python -m compileall -q sixcat
           python tools/validate_workflows.py
+          python -m sixcat community validate --root .
       - name: Unit and integration tests (no model or API key required)
         run: python -m coverage run --source=sixcat -m pytest tests -q --timeout=90 --junitxml=junit.xml
       - name: Coverage report
@@ -96,6 +97,9 @@ jobs:
           export SIXCAT_EXPECTED_VERSION="$(python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
           cd /tmp
           /tmp/sixcat-wheel/bin/python -m sixcat --help
+          /tmp/sixcat-wheel/bin/python -m sixcat submit --help
+          /tmp/sixcat-wheel/bin/python -m sixcat community --help
+          /tmp/sixcat-wheel/bin/python -c "from sixcat.community import load_registry; assert load_registry()['benchmarks']"
           /tmp/sixcat-wheel/bin/python -m sixcat speed --help
           /tmp/sixcat-wheel/bin/python -m sixcat.hermes --help
           /tmp/sixcat-wheel/bin/python -m sixcat.hermes inspect --help
