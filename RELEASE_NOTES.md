@@ -1,3 +1,30 @@
+# SixCat 0.8.3 — all 120 items with local Code execution
+
+Restore the requested standard scope for one-line Hermes evaluations:
+**120 scored items, six categories, including all 20 HumanEval Code items.**
+
+- Code execution is enabled by default. Generated Python is executed and tested
+  locally on the machine running Sixcat using its existing Python checker.
+- Remove the automatic `--skip-code-exec` / 100-item / Code N/A fallback from
+  the Hermes skill, README, guide, controller example and AGENTS.md.
+- A separate container, VM or isolation approval is not a prerequisite.
+- `--skip-code-exec` remains an explicit user opt-out, not an agent-selected
+  default. Real execution failures/deadlines remain errors or incomplete
+  receipts; they must not silently reduce the requested scope.
+- Preserve existing timeouts, temporary directories, bounded output,
+  environment filtering and AST/import guards. The checker is not a security
+  sandbox and the release does not claim arbitrary generated code is harmless.
+- Regression coverage exercises the Hermes bridge's default full 120-item run
+  with real local execution of all 20 Code fixtures, plus explicit opt-out and
+  synchronized instructions. No live model or provider quota is needed.
+
+The dataset, parser, first-response scoring and model/price selection behavior
+are unchanged. Old code-disabled receipts remain code-disabled and must not be
+relabeled as complete 120-item results. Use a fresh result path for the complete
+benchmark rather than merging a different scope into a previous run.
+
+---
+
 # SixCat 0.8.2 — model names are not spending constraints
 
 Correct the v0.8.1 interpretation of the example "Nemotron ultra free".
