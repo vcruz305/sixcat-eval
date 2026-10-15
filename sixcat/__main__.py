@@ -573,6 +573,8 @@ def _preflight_main(argv: list[str]) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
     parser.add_argument("--model", required=True)
     parser.add_argument("--api-key", default=os.environ.get("SIXCAT_API_KEY", "none"))
+    parser.add_argument("--policy", choices=("strict", "vendor"), default="strict")
+    parser.add_argument("--policy-family", default=None)
     parser.add_argument("--ctx", type=int, default=None)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--full", action="store_true")
@@ -584,11 +586,13 @@ def _preflight_main(argv: list[str]) -> int:
         parser.error("--ctx must be a positive token count")
     from .client import fetch_server_props
     from .context_preflight import assemble_preflight, format_preflight
-    from .policy import STRICT_BUDGETS, THINKING_BUDGETS
+    from .policy import override_thinking, resolve_policy
     from .run import expected_scored_items
 
     server_props = fetch_server_props(args.base_url, args.api_key)
-    budgets = THINKING_BUDGETS if args.thinking == "on" else STRICT_BUDGETS
+    policy = resolve_policy(args.policy, args.model, family=args.policy_family)
+    policy = override_thinking(policy, args.thinking == "on")
+    budgets = policy.budgets
     limit = None if args.full else args.limit
     preflight = assemble_preflight(
         requested_model=args.model,
@@ -599,6 +603,10 @@ def _preflight_main(argv: list[str]) -> int:
         configured_ctx=args.ctx,
         thinking=args.thinking == "on",
     )
+    preflight["policy_name"] = policy.name
+    preflight["policy"] = policy.to_dict()
+    preflight["policy_fingerprint"] = policy.fingerprint
+    preflight["inference_verified"] = False
     if args.json:
         print(json.dumps(preflight, indent=2, ensure_ascii=False))
     else:

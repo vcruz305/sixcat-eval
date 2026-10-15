@@ -4,7 +4,11 @@
 
 **120 challenging questions. Six categories. One first-response score. A 30-minute budget.**
 
-SixCat is a daily regression check for local models and quantizations, not another benchmark that takes all afternoon. Standard mode keeps the frozen `challenge-v1` selection: 20 items in each category, with the hardest-first ordering retained within each category. Version **0.6.0** dispatches those categories round-robin through one bounded concurrent pool so a time-limited run does not finish Knowledge and Math while never reaching Tools.
+SixCat is a daily regression check for local models, quantizations and provider-served models, not another benchmark that takes all afternoon. Standard mode keeps the frozen `challenge-v1` selection: 20 items in each category, with the hardest-first ordering retained within each category. Categories dispatch round-robin through one bounded concurrent pool so a time-limited run does not finish Knowledge and Math while never reaching Tools.
+
+**Current release: [v0.8.0 — Hermes and Nous Portal model qualification](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.0).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
+
+[HTTP quick start](#run-the-short-benchmark) · [Hermes / Nous Portal](#hermes-and-nous-portal) · [Serving speed](#adaptive-concurrency-and-serving-speed-benchmark) · [Score contract](#score-contract) · [Release notes](RELEASE_NOTES.md)
 
 ## Run the short benchmark
 
@@ -30,6 +34,145 @@ No `--full` or extra dataset download is needed. This requests **120 scored item
 For llama.cpp, provision enough server parallel slots (`--parallel` / `-np`). For vLLM, its scheduler must have capacity for the requested sequences (`--max-num-seqs`), with sufficient KV-cache headroom. Check the runtime's own configuration rather than assuming four clients means four GPU lanes. [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) · [vLLM serving documentation](https://docs.vllm.ai/en/latest/cli/serve/).
 
 The time limit is a **shared monotonic invocation deadline**, including preflight and active requests. HTTP requests have total deadlines, so a slow-drip response cannot hold the client indefinitely. After the deadline, queued work is not started and interrupted items remain unscored. Local cleanup and saving receipts can take a little longer. Disconnecting a request does not guarantee that a remote server cancels GPU work. A 30-minute budget also cannot guarantee that any particular model finishes all 120 items.
+
+## Hermes and Nous Portal
+
+**New in v0.8.0:** qualify the exact model selected in Hermes, or ask one Hermes
+model to operate a Sixcat run against another. The installed entry points are
+`python -m sixcat.hermes` and `sixcat-hermes`. Hermes supplies provider routing and
+authentication; Sixcat sends fresh task requests and grades the saved responses.
+The target does not receive the controller's conversation, persona, memory,
+workspace files or real agent tools. The operator can be the same model as the
+target, but must not answer or grade its own benchmark questions.
+
+### Install alongside Hermes
+
+Use **Python 3.11+ from the environment containing Hermes**. Installing Sixcat into
+an unrelated system Python or empty virtual environment is not enough. From this
+checkout:
+
+```bash
+# Replace this with your actual Hermes environment; some installs use .venv.
+HERMES_PYTHON="/absolute/path/to/hermes-agent/venv/bin/python"
+"$HERMES_PYTHON" --version
+"$HERMES_PYTHON" -m pip install -e .
+"$HERMES_PYTHON" -m sixcat.hermes --help
+```
+
+To pin the release without a source checkout, install
+`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.0` into that same environment.
+The [project-local Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) remains
+available: start Hermes in the checkout and trust its project skills with
+`hermes skills trust`. The old `scripts/hermes_runner.py` entry point remains
+compatible with the installed runner.
+
+### Select a model, check it, then run
+
+Choose the **exact model ID already available to your Nous Portal account**.
+Do not add a `:free` suffix unless it is part of that actual ID. A model listing
+or successful request does not establish that usage is free.
+
+```bash
+MODEL="EXACT_MODEL_ID_FROM_YOUR_NOUS_PORTAL"
+
+# Configuration/authentication resolution only; no inference validation.
+"$HERMES_PYTHON" -m sixcat.hermes inspect \
+  --profile current --runtime-provider nous --runtime-model "$MODEL" \
+  --policy strict --json
+
+# One real, unscored request. It consumes provider quota. Stop on failure.
+"$HERMES_PYTHON" -m sixcat.hermes smoke \
+  --profile current --runtime-provider nous --runtime-model "$MODEL" --json
+```
+
+For a live in-session `/model` selection, pass **both** exact runtime flags.
+`--profile current` alone cannot reconstruct a parent conversation's model
+switch from the profile's saved configuration. To evaluate a different model,
+change `--runtime-model` without changing your current conversation or saved
+Hermes defaults. To use another saved profile, replace `current` with its name;
+omit both runtime flags only when you deliberately want that profile's persisted
+default. An explicit `HERMES_HOME` takes precedence over the sticky active profile.
+
+After a successful smoke test, start conservatively with one concurrent request:
+
+```bash
+"$HERMES_PYTHON" -m sixcat.hermes run \
+  --profile current --runtime-provider nous --runtime-model "$MODEL" -- \
+  --policy strict --thinking on --limit 20 --concurrency 1 \
+  --max-minutes 30 --skip-code-exec \
+  --artifact-id nous-candidate-01 --out results/nous-candidate-01.json \
+  --no-resume
+```
+
+**This requests 100 scored items across five categories, with Code N/A.** For the
+standard **120-item, six-category** run, remove `--skip-code-exec` only after
+arranging suitable isolation for generated-code execution. The host-guarded
+HumanEval checker is **not a security sandbox**. A smaller screening run can use
+`--limit 2 --max-minutes 5`; with code disabled that is only 10 scored questions,
+not a full qualification result.
+
+Optional `preflight` estimates context without making a model inference call:
+
+```bash
+"$HERMES_PYTHON" -m sixcat.hermes preflight \
+  --profile current --runtime-provider nous --runtime-model "$MODEL" -- \
+  --policy strict --thinking on --limit 20 --json
+```
+
+Unknown upstream context/ETA remains unknown. `inspect` and `preflight` are not
+substitutes for `smoke`, and none of these commands verifies account billing.
+
+### Let a Hermes LLM operate the evaluation
+
+In an existing Hermes conversation, ask the agent to run the commands above
+against the exact target and report from the JSON/JSONL receipts. It must not
+read answer keys, answer benchmark questions itself, edit target responses,
+change providers, or selectively retry scored failures. Settings already
+supplied by the user should not trigger another interactive setup questionnaire.
+
+For a separate **non-interactive controller**, save the completed operator
+instruction from [the guide](docs/hermes-nous.md#ask-one-hermes-model-to-operate-the-test-against-another)
+to `sixcat-controller.txt`, then use the official Hermes CLI:
+
+```bash
+hermes chat --provider nous --model "$CONTROLLER_MODEL" \
+  --query-file sixcat-controller.txt
+```
+
+`CONTROLLER_MODEL` is the operator; `--runtime-model` inside the benchmark command
+is the model being graded. The two can be identical or different. Prefer an
+existing Hermes terminal tool calling the deterministic runner directly when a
+second controller is unnecessary. Do not use `hermes chat -q` per question as a
+replacement for Sixcat's raw-model transport: that measures an agent-assisted
+configuration rather than the same isolated model contract. See the
+[official Hermes CLI documentation](https://hermes-agent.nousresearch.com/docs/user-guide/cli/).
+
+### Reliability and limits
+
+The bridge uses Hermes' streaming call path to bypass the non-stream auxiliary
+provider-fallback ladder and checks the resolved provider/model before and after
+collecting the completion. It never retries as a non-stream auxiliary call.
+This pins the Hermes client-side route; it does not attest Portal-internal
+routing, installed middleware, model weights, price, or server cancellation.
+Credentials stay with Hermes rather than being copied into benchmark commands.
+
+Tool controls, fragmented tool-call arguments, reasoning, usage and finish
+reasons are preserved. Interrupted streams are unscored transport errors;
+completed `finish_reason=length` responses remain real truncated first responses.
+The Tools category scores synthetic function calls without executing them.
+
+Use fresh artifact IDs/output paths for different targets. Check final scored
+counts and incomplete status, not only exit zero. Resume unfinished items with
+the same settings and `--retry remaining` instead of `--no-resume`; later failure
+retries must not replace first-response scores.
+
+**Use a direct HTTP endpoint for speed tests.** The Hermes bridge returns complete
+JSON downstream, not SSE token streams, so do not use it for `sixcat speed`,
+`--auto-concurrency`, or client TTFT measurements. No live Portal inference or
+billing entitlement was verified during this release's mock/loopback tests.
+
+The [full Hermes + Nous Portal guide](docs/hermes-nous.md) includes setup,
+troubleshooting, exact commands and a copyable controller prompt.
 
 ## Adaptive concurrency and serving-speed benchmark
 
@@ -212,9 +355,7 @@ EvalPlus export does **not** install or run EvalPlus and does not claim a HumanE
 
 `--full` selects **884 items**: 400 Knowledge, 100 Math, 100 Truth, 100 Instruct, 164 Code and 20 Tools. `--skip-code-exec` reduces full mode to 720. Full mode still has the time cap; only `--full --max-minutes 0` removes it. The separately bundled 541-row IFEval source is not an extra full-mode category.
 
-## Hermes and stdio
-
-The project-local [Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) selects and verifies the target, previews settings, runs the raw provider model through an authenticated loopback proxy, and reads live receipts. It never starts, kills or replaces the actual model server. HTTP concurrency is supported through the proxy.
+## Stdio harness transport
 
 `--transport stdio` remains a serial request/response protocol, with real response deadlines and desynchronization protection. It requires `--concurrency 1`; use HTTP for parallel requests. See [the stdio protocol](docs/harness-stdio.md). A harness must not expose answer keys, add agent tools, or quietly substitute a different model; stdio is not automatically equivalent to independent raw-model evaluation.
 

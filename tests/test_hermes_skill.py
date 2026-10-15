@@ -193,6 +193,7 @@ def test_hermes_runner_proxy_forwards_sampling_tools_and_exact_runtime_identity(
     assert call["tools"] == tools
     assert call["reasoning_config"] == {"enabled": True}
     assert call["extra_body"] == {
+        "tool_choice": "auto",
         "top_p": 0.95,
         "top_k": 20,
         "min_p": 0.0,
