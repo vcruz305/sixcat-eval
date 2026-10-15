@@ -6,7 +6,7 @@
 
 SixCat is a daily regression check for local models, quantizations and provider-served models, not another benchmark that takes all afternoon. Standard mode keeps the frozen `challenge-v1` selection: 20 items in each category, with the hardest-first ordering retained within each category. Categories dispatch round-robin through one bounded concurrent pool so a time-limited run does not finish Knowledge and Math while never reaching Tools.
 
-**Current release: [v0.8.0 — Hermes and Nous Portal model qualification](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.0).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
+**Current release: [v0.8.1 — One-line Hermes model evaluation](https://github.com/vcruz305/sixcat-eval/releases/tag/v0.8.1).** Evaluate the model behind Hermes using its existing authentication, or let one Hermes model operate a deterministic run against another.
 
 [HTTP quick start](#run-the-short-benchmark) · [Hermes / Nous Portal](#hermes-and-nous-portal) · [Serving speed](#adaptive-concurrency-and-serving-speed-benchmark) · [Score contract](#score-contract) · [Release notes](RELEASE_NOTES.md)
 
@@ -45,6 +45,34 @@ The target does not receive the controller's conversation, persona, memory,
 workspace files or real agent tools. The operator can be the same model as the
 target, but must not answer or grade its own benchmark questions.
 
+### Just ask your agent
+
+With the **current Sixcat skill loaded**, one sentence is enough:
+
+```text
+Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free.
+```
+
+Or invoke it explicitly: `/sixcat-eval nous portal Nemotron ultra free`.
+You do not need to provide an exact ID, an operator prompt, shell variables or a
+results path. The skill resolves the name from your live authenticated Nous
+catalog, preserves **free** as a requirement, and handles inspect, smoke, launch
+and saved-result reporting. It asks only when a real model ambiguity or blocker
+requires your input; it must never silently choose a paid sibling.
+
+Defaults are strict sampling, thinking on, 20 items per category, concurrency 1,
+a 30-minute run cap, and unique result paths. All six categories run when an
+already-approved isolated code environment is available; otherwise the agent
+announces and runs **100 items / five categories / Code N/A** without asking a
+setup questionnaire. Explicit user settings override these defaults.
+
+The instructions must be discoverable: load the updated project skill from a
+trusted checkout, or install/update the skill in your Hermes profile. A README
+on GitHub or a Python package alone is not automatically loaded into every
+Hermes conversation. An older copied skill keeps its older instructions until
+updated. This is one-time setup, not a long prompt for every evaluation.
+See [the one-line operator workflow](docs/hermes-nous.md#one-line-requests).
+
 ### Install alongside Hermes
 
 Use **Python 3.11+ from the environment containing Hermes**. Installing Sixcat into
@@ -60,7 +88,7 @@ HERMES_PYTHON="/absolute/path/to/hermes-agent/venv/bin/python"
 ```
 
 To pin the release without a source checkout, install
-`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.0` into that same environment.
+`git+https://github.com/vcruz305/sixcat-eval.git@v0.8.1` into that same environment.
 The [project-local Hermes skill](.hermes/skills/sixcat-eval/SKILL.md) remains
 available: start Hermes in the checkout and trust its project skills with
 `hermes skills trust`. The old `scripts/hermes_runner.py` entry point remains
@@ -124,15 +152,13 @@ substitutes for `smoke`, and none of these commands verifies account billing.
 
 ### Let a Hermes LLM operate the evaluation
 
-In an existing Hermes conversation, ask the agent to run the commands above
-against the exact target and report from the JSON/JSONL receipts. It must not
+In an existing Hermes conversation, use the one-line request above. The agent
+loads the skill and constructs the commands itself, then reports JSON/JSONL receipts. It must not
 read answer keys, answer benchmark questions itself, edit target responses,
-change providers, or selectively retry scored failures. Settings already
-supplied by the user should not trigger another interactive setup questionnaire.
+change providers, or selectively retry scored failures. A supplied provider/model is enough; omitted optional settings use the documented defaults.
 
-For a separate **non-interactive controller**, save the completed operator
-instruction from [the guide](docs/hermes-nous.md#ask-one-hermes-model-to-operate-the-test-against-another)
-to `sixcat-controller.txt`, then use the official Hermes CLI:
+For a separate **non-interactive controller** with this skill loaded, the same
+one-line request can be supplied through `-q` or saved to `sixcat-controller.txt`:
 
 ```bash
 hermes chat --provider nous --model "$CONTROLLER_MODEL" \

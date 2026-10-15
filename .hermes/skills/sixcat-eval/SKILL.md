@@ -1,7 +1,7 @@
 ---
 name: sixcat-eval
-description: Run Sixcat conversationally with verified live receipts.
-version: 0.8.0
+description: Run Sixcat from a model name, including Nous free models.
+version: 0.8.1
 author: Victor Cruz (vcruz305), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -15,18 +15,65 @@ metadata:
 # Sixcat Conversational Operator
 
 Run Sixcat against either the exact model backing the current Hermes session or
-an alternate OpenAI-compatible endpoint. Ask for the target first, preview the
-exact reviewed sampling policy, keep the run observable, and report only from
-saved receipts.
+an alternate OpenAI-compatible endpoint. A provider and model name are enough:
+resolve them, use the defaults below, run the evaluation, and report saved receipts.
+Do not turn a concrete target request into a configuration questionnaire.
+
+## One-line requests: default path
+
+This path takes precedence over the optional interactive wizard below.
+The user should be able to say exactly:
+
+> Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free.
+
+Or use `/sixcat-eval nous portal Nemotron ultra free`. A provider and model name
+are sufficient. **Do not ask for policy, thinking, limits, concurrency, output
+paths, or code mode before starting.** Those are operator defaults, not required
+user input. Use an explicit user override whenever one is supplied.
+
+1. Map the provider names `nous portal`, `Nous Portal`, and `nous` to `nous`.
+   Keep the controller on its current model. Locate the interpreter and existing
+   authentication; never ask the user to paste credentials or switch models.
+2. Resolve a friendly name from the live authenticated Nous catalog with:
+   `python -m sixcat.hermes resolve --profile current --runtime-provider nous --model-query "Nemotron ultra free" --json`.
+   Substitute the actual requested phrase. The word **free is a constraint**:
+   do not drop it, make up a `:free` ID, choose a paid sibling or use a static
+   fallback catalog. The resolver returns an exact `model` only for one match.
+   If `status=ambiguous`, ask one targeted model-choice question; if not found,
+   report that no matching available free variant was found. Do not guess.
+   Catalog labels or zero prices are evidence, not guaranteed free billing.
+3. Use profile `current`, policy `strict`, thinking `on`, `--limit 20`,
+   `--concurrency 1`, and `--max-minutes 30`, unless overridden. Generate a unique
+   filesystem-safe model/timestamp RUN_ID and JSON/JSONL paths automatically.
+4. Use all six categories (120 items) when an already-approved isolated,
+   non-privileged code-execution environment is available. Otherwise use
+   `--skip-code-exec` automatically and announce **100 items, five categories,
+   Code N/A** before launch. Do not silently call that a full Sixcat. Do not
+   provision paid isolation or execute untrusted completions on an unapproved
+   host merely to avoid a question. If the user explicitly demands all six and
+   isolation is unavailable, report the prerequisite instead of changing scope.
+5. Run inspect and one smoke request against the resolved exact model/provider.
+   Stop on auth, route or smoke failure. Run the benchmark with the chosen
+   defaults and `--no-resume` in a fresh output path. Use tracked process/live
+   status tools and report the saved results, errors and completion counts.
+6. Never read answer keys into model context, answer tasks yourself, alter
+   completions, substitute providers, or rerun scored failures to inflate scores.
+   No speed/auto-concurrency sweep, release-upgrade dialogue or setup form.
+   An optional release check may be informational; never downgrade a newer main
+   checkout to an older tag or update software without authorization.
+
+Only a real blocker (missing authentication/installation, unavailable required
+execution mode, no model match) or genuine model ambiguity interrupts this path.
+A long operator prompt, exact ID supplied by the user, and manual result paths
+are **not prerequisites**. The detailed commands belong in this skill and README.
 
 ## Non-interactive and Nous Portal runs
 
-When the user already supplied the target, policy, scope, thinking setting,
-output path and code-execution choice, do not ask those questions again. In a
-non-interactive launch, do not call `clarify`, `hermes model`, `hermes setup`, or
-upgrade software. Missing target identity or authentication is a prerequisite
-error, not permission to switch models. Interactive setup below remains for
-requests that actually need choices.
+Apply the same one-line defaults to `hermes chat -q` instructions. Do not call
+`clarify` in non-interactive mode; fail with a specific diagnostic and candidates
+when a real choice is needed. Do not invoke `hermes model`, `hermes setup`, or
+upgrade software. The optional wizard below is only for users who explicitly
+ask to customize settings or need help choosing an unspecified target.
 
 Use the Python 3.11+ interpreter containing Hermes and Sixcat, not whichever
 `python` the terminal happens to resolve. The installed entry point is
@@ -49,7 +96,7 @@ Asking an agent to read the tests/solutions and then report its own score is not
 A full `hermes chat -q` session adds persona, memory and tools; evaluate that
 separately as an agent-assisted configuration, not the raw Sixcat leaderboard.
 
-## 0.8.0 execution contract
+## 0.8.1 execution contract
 
 Keep Standard at 120 scored questions and 30 minutes. Do not automatically enable
 full mode or repeated runs. For HTTP, offer `--concurrency 2` or `4` when the server
@@ -125,7 +172,11 @@ actual model server. If no target is reachable, report that prerequisite.
   scored-category counts for the requested scope; exit zero alone is not enough.
 - Release check: `scripts/check_release.py --json` before the first question.
 
-## Procedure
+## Procedure (optional interactive wizard)
+
+Skip this entire wizard for the one-line target path above. It is for an
+explicit request to customize options or help choosing a missing target only.
+If a target is already known, do not ask which target to evaluate again.
 
 Hard rule for every question, including target, sampling, size, code,
 thinking, release update, retry mode, and vendor-family adopt:
@@ -187,7 +238,7 @@ questionnaire. Do not use `--no-resume`.
 
 ### 1. Ask which target to evaluate
 
-Before probing any endpoint, ask exactly:
+Only when the target cannot be inferred from the request or live session, ask:
 
 > 🎯 Do you want to run Sixcat against the model I am currently running,
 > another Hermes profile, an alternate OpenAI-compatible endpoint, or this
@@ -246,9 +297,9 @@ the runner resolves the profile's configured default route.
 
 ### 2. Immediately ask the remaining questions
 
-As soon as the user answers the target question, the **very next interaction**
-must be the setup form below. Do not inspect, probe, preflight, discover files,
-or run any terminal command between the target answer and these questions.
+Only when the user explicitly requested interactive customization, use the
+setup form below for settings still missing. Merely naming a provider/model
+never triggers this form: use the one-line defaults instead.
 
 Use a **single** `clarify` call with **four** items in `questions`. Every item
 must include a non-empty `choices` array. Do not ask these as plain chat text and
@@ -563,8 +614,8 @@ The skill is working when:
 - the result JSON is self-auditing and all warnings are surfaced;
 - a timed-out or incomplete run asked to merge remaining/failed items instead of
   suggesting a full rerun;
-- a newer GitHub release was offered as an option-only update before any other
-  Sixcat question;
+- one-line target requests bypassed the wizard and upgrade prompts; optional
+  interactive release choices were offered only in the customization path;
 - every `clarify` call, including follow-ups, included a non-empty `choices`
   array so Telegram rendered buttons instead of a bare question;
 - an unmapped vendor request offered adopt-family, custom, or strict instead of

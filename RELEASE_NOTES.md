@@ -1,3 +1,29 @@
+# SixCat 0.8.1 — one-line Hermes model evaluation
+
+A provider and model name now suffice for the Hermes skill. For example:
+`Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free.`
+The README and skill own the operating instructions, not the user's prompt.
+
+- One-line target requests bypass the optional settings/upgrade questionnaire.
+- `sixcat.hermes resolve --model-query "..." --json` resolves friendly Nous
+  model names from a fresh authenticated catalog without inference. It preserves
+  a free requirement, never invents a wire ID, and reports ambiguity/no match.
+- Strict sampling, thinking on, 20 items/category, concurrency 1, 30 minutes and
+  unique output names are documented defaults; user overrides still take priority.
+- Run 120 items when approved isolated code execution is available; otherwise
+  announce 100 items with Code N/A. Explicit all-six requests remain all-six.
+- Updated skill loading guidance: copying a new README or installing the package
+  alone does not update an older profile-installed skill.
+- Regression tests cover name matching, free-vs-paid choices, ambiguity,
+  catalog/auth failures, metadata-only command dispatch and instruction precedence.
+
+No live Portal inference, model availability, entitlement or billing verification
+is claimed. The scoring dataset, parser, first-response rules and speed suite
+are unchanged. A current skill plus an authenticated Hermes environment remains
+necessary; skill-following by an arbitrary model is not guaranteed by unit tests.
+
+---
+
 # SixCat 0.8.0 — Hermes and Nous Portal model qualification
 
 SixCat 0.8.0 makes Hermes-backed model evaluation a packaged, documented workflow.

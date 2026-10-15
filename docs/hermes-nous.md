@@ -1,5 +1,49 @@
 # Qualify Nous Portal models from Hermes
 
+## One-line requests
+
+After loading the updated Sixcat skill, say:
+
+```text
+Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free.
+```
+
+Or `/sixcat-eval nous portal Nemotron ultra free`. The operator instructions
+below are reference material, **not a prompt the user must repeat**. The skill
+uses strict sampling, thinking on, 20 items per category, concurrency 1 and a
+30-minute run cap. Output names are generated automatically. Use 120 items
+with an already-approved isolated code environment; otherwise announce and run
+100 items with Code N/A. An explicit demand for all six must not be silently
+reduced when the required execution environment is missing.
+
+Friendly names are resolved with a metadata-only command:
+
+```bash
+"$HERMES_PYTHON" -m sixcat.hermes resolve \
+  --profile current --runtime-provider nous \
+  --model-query "Nemotron ultra free" --json
+```
+
+The helper uses a fresh authenticated Nous `/models` catalog, not a hardcoded
+model alias or the proxy's synthetic `/models`. It matches model ID/name tokens,
+preserves the free constraint, and returns an exact wire ID only for one match.
+`--free-only` can also express that constraint explicitly. Explicit nonzero
+prompt/completion prices fail the free constraint even when a label says free.
+Subscription-billed and free-labeled entries are labeled as such, not treated
+as proof of actual zero billing. No availability or entitlement is inferred
+from the example name. The smoke request remains necessary.
+
+If multiple variants match, the operator asks only which model to use. No match,
+unavailable authentication or missing required isolation is a specific blocker,
+not an excuse to silently substitute a model, paid route, or different scope.
+Missing optional settings never start a questionnaire. Existing live session
+and profile defaults are not changed.
+
+The skill must be loaded or discoverable. Trust a current checkout's project
+skill or update the installed skill in the relevant Hermes profile; installing
+the Python package alone does not register the skill in every conversation.
+The operator should load the skill and read these instructions itself.
+
 ## What this measures
 
 Use the deterministic Sixcat runner to evaluate the exact provider/model behind
@@ -47,7 +91,8 @@ installed as a console script. The old project-skill script remains compatible.
 
 ## Pick the exact target
 
-Use the exact model ID already shown for your Nous Portal entitlement. Do not
+For manual CLI use, use the exact model ID returned by `resolve` or already
+shown for your Nous Portal entitlement; the conversational skill resolves it for you. Do not
 assume all catalog models are free, or manufacture a `:free` suffix. The bridge
 cannot attest prices, credits or free access. Even the smoke request consumes
 quota. Nous provider authentication stays with Hermes; do not copy OAuth tokens
@@ -145,8 +190,8 @@ policies and quantizations require separate output files.
 
 ## Ask one Hermes model to operate the test against another
 
-Paste into the controller's existing Hermes conversation, filling in the target
-and paths first:
+Normally use the one-line request above. The following expanded instruction is
+an optional reference for custom overrides, not required user input:
 
 ```text
 Run Sixcat against the exact model TARGET_MODEL_ID through provider nous,

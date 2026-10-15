@@ -93,13 +93,15 @@ jobs:
         run: |
           python -m venv /tmp/sixcat-wheel
           /tmp/sixcat-wheel/bin/python -m pip install dist/*.whl
+          export SIXCAT_EXPECTED_VERSION="$(python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
           cd /tmp
           /tmp/sixcat-wheel/bin/python -m sixcat --help
           /tmp/sixcat-wheel/bin/python -m sixcat speed --help
           /tmp/sixcat-wheel/bin/python -m sixcat.hermes --help
           /tmp/sixcat-wheel/bin/python -m sixcat.hermes inspect --help
+          /tmp/sixcat-wheel/bin/python -m sixcat.hermes resolve --help
           /tmp/sixcat-wheel/bin/sixcat-hermes smoke --help
-          /tmp/sixcat-wheel/bin/python -c "from importlib.metadata import version; assert version('sixcat-eval') == '0.8.0'"
+          /tmp/sixcat-wheel/bin/python -c "import os; from importlib.metadata import version; assert version('sixcat-eval') == os.environ['SIXCAT_EXPECTED_VERSION']"
           /tmp/sixcat-wheel/bin/python -c "from sixcat.dataio import read_jsonl; assert len(read_jsonl('humaneval.jsonl')) == 164; from sixcat.manifest import expected_counts; assert sum(expected_counts(20).values()) == 120; assert sum(expected_counts(None).values()) == 884"
       - name: Archive exact tested sources
         if: always()
