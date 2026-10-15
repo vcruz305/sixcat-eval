@@ -558,6 +558,13 @@ def _parser() -> argparse.ArgumentParser:
         description="Resolve a Hermes profile runtime and expose its exact model to Sixcat temporarily."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    resolve_parser = subparsers.add_parser("resolve", help="Resolve a friendly Nous model name; no inference")
+    resolve_parser.add_argument("--profile", default="current")
+    resolve_parser.add_argument("--runtime-provider", choices=("nous",), default="nous")
+    resolve_parser.add_argument("--model-query", required=True)
+    resolve_parser.add_argument("--free-only", action="store_true")
+    resolve_parser.add_argument("--json", action="store_true")
+
     inspect_parser = subparsers.add_parser("inspect")
     _common_args(inspect_parser)
     inspect_parser.add_argument("--json", action="store_true")
@@ -596,6 +603,11 @@ def _main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if sys.version_info < (3, 11):
         raise RuntimeError("Sixcat requires Python 3.11+; use the Python interpreter from your Hermes environment")
+    if args.command == "resolve":
+        from .hermes_catalog import resolve_nous_query
+        receipt = resolve_nous_query(args.profile, args.model_query, free_only=args.free_only)
+        print(json.dumps(receipt, indent=2, ensure_ascii=False) if args.json else receipt)
+        return 0 if receipt["status"] == "resolved" else 2
     forwarded = _forward_args(args.sixcat_args) if hasattr(args, "sixcat_args") else []
     target = resolve_runtime_target(profile=args.profile, runtime_model=args.runtime_model,
                                     runtime_provider=args.runtime_provider)
