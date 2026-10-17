@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import math
 import os
 import statistics
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -24,14 +24,22 @@ from .client import ChatClient, fetch_server_props
 from .journal import TimeBudget
 from .policy import custom_policy, override_thinking, resolve_policy
 from .storage import atomic_write_json
+from .speed_stream import _content_from_chunk, _policy_payload, _sample_from_stream, _stream_one
 
-SPEED_SCHEMA = "sixcat-speed-v2"
+SPEED_SCHEMA = "sixcat-speed-v3"
 CURVE_METHOD = "smallest-concurrency-within-90pct-peak-v1"
 DEFAULT_CANDIDATES = (1, 2, 4, 8)
 DEFAULT_CURVE_SECONDS = 60.0
 DEFAULT_CONFIRM_SAMPLES = 32
+DEFAULT_QUICK_SAMPLES = 5
+PROMPT_DATASET = "sixcat-speed-prose-code-v1"
 DEFAULT_SPEED_PROFILES = ("decode", "balanced", "prefill")
 WORKLOAD_PROFILES: dict[str, dict[str, Any]] = {
+    "quick": {
+        "prompt_words": 512,
+        "max_tokens": 256,
+        "purpose": "short single-user TTFT, effective prefill and generation check",
+    },
     "decode": {
         "prompt_words": 32,
         "max_tokens": 512,
@@ -127,260 +135,76 @@ def parse_candidates(value: str | list[int] | tuple[int, ...]) -> list[int]:
     return candidates
 
 
-def _policy_payload(client: ChatClient, prompt: str, max_tokens: int) -> dict[str, Any]:
-    request_params: dict[str, Any] = {
-        "temperature": client.policy.temperature,
-        "max_tokens": max_tokens,
-        "enable_thinking": client.policy.thinking,
-    }
-    for key in ("top_p", "top_k", "min_p"):
-        value = getattr(client.policy, key)
-        if value is not None:
-            request_params[key] = value
-    request_params.update(client.policy.to_dict()["extra"])
-
-    template_kwargs: dict[str, Any] = {"enable_thinking": client.policy.thinking}
-    if request_params.pop("preclose_think", False):
-        template_kwargs["enable_thinking"] = False
-    effort = client.policy.extra.get("reasoning_effort")
-    if effort is not None:
-        template_kwargs["reasoning_effort"] = effort
-
-    payload: dict[str, Any] = {
-        "model": client.model,
-        "messages": [{"role": "user", "content": prompt}],
-        **{key: value for key, value in request_params.items() if key != "enable_thinking"},
-        "chat_template_kwargs": template_kwargs,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-    }
-    return payload
-
-
 def synthetic_prompt(*, concurrency: int, index: int, words: int, probe_id: str, phase: str) -> str:
-    # The unique marker comes first so prefix caches cannot reuse the large probe body,
-    # including between warmup/curve/confirmation phases or separate SixCat invocations.
-    marker = (
-        f"SIXCAT-SPEED-{probe_id}-{phase}-C{concurrency}-I{index}-"
-        f"X{(concurrency * 7919 + index * 104729) % 1_000_003}"
+    """Frozen synthetic prose/code tasks; unique early markers limit prefix reuse."""
+    marker = f"SIXCAT-SPEED-{probe_id}-{phase}-C{concurrency}-I{index}"
+    passages = (
+        "A research observatory collects sensor readings at several remote stations. "
+        "Each station stores a timestamp, a measurement and a device identifier. "
+        "The team wants to tolerate intermittent connectivity while detecting stale "
+        "readings and preserving the original measurement order. Operators review "
+        "a daily report that explains missing data, delayed delivery and unusual "
+        "measurements. The system must remain understandable to the small team "
+        "that maintains it, including people who did not write the original software.",
+
+        "A library is reorganizing its public workshop schedule. Some visitors can "
+        "attend only on weekends, while others prefer short evening sessions. "
+        "The available rooms have different capacities and equipment. Instructors "
+        "need preparation time between sessions. The organizer wants a practical "
+        "plan that balances availability, accessibility and maintenance effort. "
+        "A good proposal states its assumptions, identifies tradeoffs and suggests "
+        "a small first experiment that can be evaluated before expanding the program.",
+
+        "An engineering team maintains a service that accepts events from independent "
+        "clients. Clients occasionally retry an event after a timeout, and their "
+        "clocks are not perfectly synchronized. A request can succeed even if its "
+        "acknowledgment is lost. The service should make duplicate handling explicit "
+        "and preserve enough information to investigate mistakes. Monitoring should "
+        "help distinguish a slow dependency from a busy queue or a failed operation. "
+        "Changes will be rolled out gradually with a documented recovery procedure.",
+
+        "Consider this pseudocode: create an empty dictionary named latest; for each "
+        "record, read its device key; compare its timestamp with the timestamp stored "
+        "for that key; replace the stored record only when the new timestamp is later; "
+        "return the dictionary values sorted by device key. Records can arrive out "
+        "of order and two records can have the same timestamp. The implementation "
+        "needs a stated tie-breaking rule and a clear policy for missing fields."
     )
-    phrase = "amber cedar cobalt delta ember frost granite harbor iris juniper kinetic lunar"
-    tokens = phrase.split()
-    body = " ".join(tokens[pos % len(tokens)] for pos in range(words))
+    tasks = (
+        "Explain a practical design for the observatory data pipeline, including its failure cases.",
+        "Propose a workshop scheduling plan and explain the tradeoffs behind your choices.",
+        "Explain how to implement safe event retries and how to verify the resulting behavior.",
+        "Write a Python implementation of the pseudocode and explain its edge cases.",
+        "Compare two implementation approaches for the described systems and justify a recommendation."
+    )
+    pool = " ".join(passages[(index + offset) % len(passages)] for offset in range(len(passages))).split()
+    body = " ".join(pool[pos % len(pool)] for pos in range(words))
     return (
-        f"[{marker}] This is an unscored synthetic serving-speed probe. "
-        "Read the entire payload. Then emit a long sequence of simple lowercase words "
-        "separated by spaces until the server stops generation; do not stop early and "
-        "do not answer any benchmark question.\n\n"
-        f"payload: {body}"
+        f"[{marker}] This is an unscored synthetic serving-performance task. "
+        "Read the supplied context and give a detailed, self-contained response to "
+        "the task. Use the model's configured reasoning mode.\n\n"
+        f"Context:\n{body}\n\nTask: {tasks[index % len(tasks)]}"
     )
-
-
-def _content_from_chunk(chunk: dict[str, Any]) -> str:
-    choices = chunk.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    choice = choices[0] if isinstance(choices[0], dict) else {}
-    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-    for key in ("content", "reasoning_content", "reasoning"):
-        value = delta.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return ""
-
-
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-        return None
-    return float(value)
-
-
-def _sample_from_stream(
-    *,
-    started: float,
-    first_output: float | None,
-    ended: float,
-    usage: dict[str, Any],
-    timings: dict[str, Any],
-    metrics: dict[str, Any],
-    meta_info: dict[str, Any],
-    chunks: int,
-    compatibility_mode: str,
-) -> dict[str, Any]:
-    ttft = None if first_output is None else max(first_output - started, 0.0)
-    e2e = max(ended - started, 0.0)
-    completion_tokens = _number(usage.get("completion_tokens"))
-    prompt_tokens = _number(usage.get("prompt_tokens"))
-    if completion_tokens is None:
-        completion_tokens = _number(timings.get("predicted_n"))
-    if prompt_tokens is None:
-        prompt_n = _number(timings.get("prompt_n"))
-        cache_n = _number(timings.get("cache_n"))
-        if prompt_n is not None:
-            prompt_tokens = prompt_n + (cache_n or 0.0)
-
-    decode_s = None
-    effective_decode_tps = None
-    tpot_s = None
-    if ttft is not None and ended >= first_output:
-        decode_s = max(ended - first_output, 0.0)
-        if completion_tokens is not None and completion_tokens > 1 and decode_s > 0:
-            generated_after_first = completion_tokens - 1.0
-            effective_decode_tps = generated_after_first / decode_s
-            tpot_s = decode_s / generated_after_first
-
-    effective_prefill_tps = None
-    if prompt_tokens is not None and ttft is not None and ttft > 0:
-        # This is intentionally named "effective": it includes queue/network/client
-        # overhead and must not be confused with provider-internal prompt throughput.
-        effective_prefill_tps = prompt_tokens / ttft
-
-    provider_ttft = _number(metrics.get("time_to_first_token_ms"))
-    provider_ttft = provider_ttft / 1000.0 if provider_ttft is not None else None
-    provider_generation = _number(metrics.get("generation_time_ms"))
-    provider_generation = provider_generation / 1000.0 if provider_generation is not None else None
-    provider_queue = _number(metrics.get("queue_time_ms"))
-    provider_queue = provider_queue / 1000.0 if provider_queue is not None else None
-    provider_mean_itl = _number(metrics.get("mean_itl_ms"))
-    provider_mean_itl = provider_mean_itl / 1000.0 if provider_mean_itl is not None else None
-
-    if provider_ttft is None:
-        provider_ttft = _number(meta_info.get("ttft"))
-    provider_tpot = _number(meta_info.get("tpot"))
-    if provider_mean_itl is None and provider_tpot is not None:
-        provider_mean_itl = provider_tpot
-
-    provider_effective_prefill_tps = None
-    if prompt_tokens is not None and provider_ttft is not None and provider_ttft > 0:
-        provider_effective_prefill_tps = prompt_tokens / provider_ttft
-    provider_effective_decode_tps = None
-    if (
-        completion_tokens is not None
-        and completion_tokens > 1
-        and provider_generation is not None
-        and provider_generation > 0
-    ):
-        provider_effective_decode_tps = (completion_tokens - 1.0) / provider_generation
-    elif completion_tokens is not None and completion_tokens > 1 and provider_tpot is not None and provider_tpot > 0:
-        provider_effective_decode_tps = 1.0 / provider_tpot
-
-    return {
-        "ok": first_output is not None,
-        "compatibility_mode": compatibility_mode,
-        "chunks": chunks,
-        "client_ttft_s": ttft,
-        "e2e_s": e2e,
-        "decode_s": decode_s,
-        "tpot_s": tpot_s,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "effective_prefill_tps": effective_prefill_tps,
-        "effective_decode_tps": effective_decode_tps,
-        "server_prefill_tps": _number(timings.get("prompt_per_second")),
-        "server_decode_tps": _number(timings.get("predicted_per_second")),
-        "provider_ttft_s": provider_ttft,
-        "provider_generation_s": provider_generation,
-        "provider_queue_s": provider_queue,
-        "provider_mean_itl_s": provider_mean_itl,
-        "provider_tokens_per_second": _number(metrics.get("tokens_per_second")),
-        "provider_effective_prefill_tps": provider_effective_prefill_tps,
-        "provider_effective_decode_tps": provider_effective_decode_tps,
-    }
-
-
-async def _stream_one(
-    http: httpx.AsyncClient,
-    client: ChatClient,
-    prompt: str,
-    *,
-    max_tokens: int,
-    timeout_s: float,
-) -> dict[str, Any]:
-    payload = _policy_payload(client, prompt, max_tokens)
-    headers = {"Authorization": f"Bearer {client.api_key}", "Content-Type": "application/json"}
-
-    async def attempt(body: dict[str, Any], compatibility_mode: str) -> dict[str, Any]:
-        started = time.perf_counter()
-        first_output = None
-        usage: dict[str, Any] = {}
-        timings: dict[str, Any] = {}
-        metrics: dict[str, Any] = {}
-        meta_info: dict[str, Any] = {}
-        chunks = 0
-        async with asyncio.timeout(timeout_s):
-            async with http.stream(
-                "POST",
-                client.base_url + "/chat/completions",
-                json=body,
-                headers=headers,
-                timeout=timeout_s,
-            ) as response:
-                if response.status_code >= 400:
-                    # Speed probes may perform one compatibility fallback for servers
-                    # that stream but do not implement stream_options.include_usage.
-                    if response.status_code in {400, 422} and "stream_options" in body:
-                        raise _StreamOptionsUnsupported()
-                    response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line or line.startswith(":") or not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(chunk, dict):
-                        continue
-                    chunks += 1
-                    content = _content_from_chunk(chunk)
-                    if content and first_output is None:
-                        first_output = time.perf_counter()
-                    if isinstance(chunk.get("usage"), dict):
-                        usage = chunk["usage"]
-                    if isinstance(chunk.get("timings"), dict):
-                        timings = chunk["timings"]
-                    if isinstance(chunk.get("metrics"), dict):
-                        metrics = chunk["metrics"]
-                    if isinstance(chunk.get("meta_info"), dict):
-                        meta_info = chunk["meta_info"]
-        ended = time.perf_counter()
-        return _sample_from_stream(
-            started=started,
-            first_output=first_output,
-            ended=ended,
-            usage=usage,
-            timings=timings,
-            metrics=metrics,
-            meta_info=meta_info,
-            chunks=chunks,
-            compatibility_mode=compatibility_mode,
-        )
-
-    try:
-        return await attempt(payload, "stream+usage")
-    except _StreamOptionsUnsupported:
-        fallback = dict(payload)
-        fallback.pop("stream_options", None)
-        return await attempt(fallback, "stream-no-usage")
-
-
-class _StreamOptionsUnsupported(Exception):
-    pass
-
 
 def _summarize(samples: list[dict[str, Any]], *, elapsed_s: float, concurrency: int) -> dict[str, Any]:
     successes = [sample for sample in samples if sample.get("ok")]
-    prompt_tokens = sum(sample["prompt_tokens"] for sample in successes if sample.get("prompt_tokens") is not None)
-    completion_tokens = sum(sample["completion_tokens"] for sample in successes if sample.get("completion_tokens") is not None)
-    token_counted = sum(1 for sample in successes if sample.get("completion_tokens") is not None)
-    aggregate_output_tps = completion_tokens / elapsed_s if elapsed_s > 0 and token_counted else None
-
+    token_counted = sum(sample.get("completion_tokens") is not None for sample in successes)
+    prompt_counted = sum(sample.get("prompt_tokens") is not None for sample in successes)
+    known_completion = sum(sample["completion_tokens"] for sample in successes if sample.get("completion_tokens") is not None)
+    known_prompt = sum(sample["prompt_tokens"] for sample in successes if sample.get("prompt_tokens") is not None)
+    full_output_coverage = bool(successes) and token_counted == len(successes)
+    aggregate_output_tps = known_completion / elapsed_s if elapsed_s > 0 and full_output_coverage else None
     fields = {
         "client_ttft_s": "ttft",
+        "client_ttfo_s": "ttfo",
         "e2e_s": "e2e",
+        "stream_end_s": "stream_end",
         "tpot_s": "tpot",
+        "prompt_tokens": "prompt_token_lengths",
+        "completion_tokens": "completion_token_lengths",
+        "reasoning_tokens": "reasoning_token_lengths",
+        "answer_tokens": "answer_token_lengths",
+        "cached_prompt_tokens": "cached_prompt_token_lengths",
         "effective_prefill_tps": "effective_prefill_tps",
         "effective_decode_tps": "effective_decode_tps",
         "server_prefill_tps": "server_prefill_tps",
@@ -397,22 +221,33 @@ def _summarize(samples: list[dict[str, Any]], *, elapsed_s: float, concurrency: 
         output: _distribution([sample[field] for sample in successes if sample.get(field) is not None])
         for field, output in fields.items()
     }
+    observations = {
+        field: dict(sorted(Counter(str(sample.get(field) or "unavailable") for sample in successes).items()))
+        for field in ("reasoning_observation", "decode_metric_status", "prefill_metric_status", "ttfo_metric_status", "token_count_source")
+    }
     return {
         "concurrency": concurrency,
         "requested": len(samples),
         "succeeded": len(successes),
         "failed": len(samples) - len(successes),
-        "success_rate": (len(successes) / len(samples)) if samples else 0.0,
+        "success_rate": len(successes) / len(samples) if samples else 0.0,
         "elapsed_s": elapsed_s,
-        "request_rps": (len(successes) / elapsed_s) if elapsed_s > 0 else None,
-        "prompt_tokens": prompt_tokens if successes else None,
-        "completion_tokens": completion_tokens if token_counted else None,
+        "request_rps": len(successes) / elapsed_s if elapsed_s > 0 else None,
+        "prompt_tokens": known_prompt if successes and prompt_counted == len(successes) else None,
+        "completion_tokens": known_completion if full_output_coverage else None,
+        "known_completion_tokens": known_completion,
         "token_counted_requests": token_counted,
+        "token_count_coverage": token_counted / len(successes) if successes else 0.0,
         "aggregate_output_tps": aggregate_output_tps,
+        "aggregate_output_tps_status": "complete-token-coverage" if full_output_coverage else "unavailable-incomplete-token-coverage",
+        "output_limit_requests": sum(bool(sample.get("output_limit_reached")) for sample in successes),
+        "answer_started_requests": sum(sample.get("client_ttfo_s") is not None for sample in successes),
+        "finish_reasons": dict(Counter(str(sample.get("finish_reason") or "unspecified") for sample in successes)),
+        "observations": observations,
+        "tail_sample_warning": len(successes) < 100,
         **distributions,
         "samples": samples,
     }
-
 
 async def _run_level_async(
     client: ChatClient,
@@ -424,48 +259,56 @@ async def _run_level_async(
     deadline: float,
     probe_id: str,
     phase: str,
+    warmup_requests: int = 0,
 ) -> dict[str, Any]:
-    started = time.perf_counter()
-    timeout_s = deadline - time.monotonic()
-    if timeout_s <= 0:
+    if deadline <= time.monotonic():
         raise TimeoutError("speed probe deadline reached")
     limits = httpx.Limits(max_connections=max(16, concurrency * 2), max_keepalive_connections=max(8, concurrency))
+    capabilities = dict(getattr(client, "speed_options", {}) or {})
     async with httpx.AsyncClient(limits=limits, follow_redirects=False) as http:
-        semaphore = asyncio.Semaphore(concurrency)
+        async def batch(count: int, batch_concurrency: int, batch_phase: str) -> dict[str, Any]:
+            semaphore = asyncio.Semaphore(batch_concurrency)
+            started = time.perf_counter()
 
-        async def run(index: int) -> dict[str, Any]:
-            async with semaphore:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return {"ok": False, "error_type": "DeadlineExceeded"}
-                prompt = synthetic_prompt(
-                    concurrency=concurrency,
-                    index=index,
-                    words=prompt_words,
-                    probe_id=probe_id,
-                    phase=phase,
-                )
-                try:
-                    return await _stream_one(
-                        http,
-                        client,
-                        prompt,
-                        max_tokens=max_tokens,
-                        timeout_s=min(client.timeout, remaining),
+            async def run(index: int) -> dict[str, Any]:
+                async with semaphore:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {"ok": False, "error_type": "DeadlineExceeded"}
+                    prompt = synthetic_prompt(
+                        concurrency=batch_concurrency, index=index, words=prompt_words,
+                        probe_id=probe_id, phase=batch_phase,
                     )
-                except (TimeoutError, asyncio.TimeoutError, httpx.TimeoutException):
-                    return {"ok": False, "error_type": "TimeoutError"}
-                except httpx.HTTPStatusError as exc:
-                    return {"ok": False, "error_type": f"HTTP{exc.response.status_code}"}
-                except httpx.HTTPError:
-                    return {"ok": False, "error_type": "HTTPError"}
-                except Exception as exc:  # keep speed diagnostics non-secret
-                    return {"ok": False, "error_type": type(exc).__name__}
+                    try:
+                        return await _stream_one(
+                            http, client, prompt, max_tokens=max_tokens,
+                            timeout_s=min(client.timeout, remaining), capabilities=capabilities,
+                        )
+                    except (TimeoutError, asyncio.TimeoutError, httpx.TimeoutException):
+                        return {"ok": False, "error_type": "TimeoutError"}
+                    except httpx.HTTPStatusError as exc:
+                        return {"ok": False, "error_type": f"HTTP{exc.response.status_code}"}
+                    except httpx.HTTPError:
+                        return {"ok": False, "error_type": "HTTPError"}
+                    except Exception as exc:
+                        return {"ok": False, "error_type": type(exc).__name__}
 
-        samples = await asyncio.gather(*(run(index) for index in range(requests)))
-    elapsed = time.perf_counter() - started
-    return _summarize(samples, elapsed_s=elapsed, concurrency=concurrency)
+            samples = await asyncio.gather(*(run(index) for index in range(count)))
+            return _summarize(samples, elapsed_s=time.perf_counter() - started, concurrency=batch_concurrency)
 
+        warmup = await batch(warmup_requests, 1, "warmup") if warmup_requests else None
+        if warmup is not None and warmup["succeeded"] != warmup["requested"]:
+            result = _summarize(
+                [{"ok": False, "error_type": "WarmupFailed"} for _ in range(requests)],
+                elapsed_s=0.0, concurrency=concurrency,
+            )
+        else:
+            result = await batch(requests, concurrency, phase)
+    if warmup is not None:
+        result["warmup"] = warmup
+        result["warmup_workload"] = {"prompt_words": prompt_words, "max_tokens": max_tokens}
+        result["http_client_reused_after_warmup"] = True
+    return result
 
 def run_level(
     client: ChatClient,
@@ -477,20 +320,16 @@ def run_level(
     deadline: float,
     probe_id: str | None = None,
     phase: str = "measure",
+    warmup_requests: int = 0,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_level_async(
-            client,
-            concurrency=concurrency,
-            requests=requests,
-            prompt_words=prompt_words,
-            max_tokens=max_tokens,
-            deadline=deadline,
-            probe_id=probe_id or uuid.uuid4().hex[:12],
-            phase=phase,
+            client, concurrency=concurrency, requests=requests,
+            prompt_words=prompt_words, max_tokens=max_tokens, deadline=deadline,
+            probe_id=probe_id or uuid.uuid4().hex[:12], phase=phase,
+            warmup_requests=warmup_requests,
         )
     )
-
 
 def recommend_concurrency(
     levels: list[dict[str, Any]],
@@ -592,8 +431,8 @@ def discover_concurrency(
             client,
             concurrency=1,
             requests=1,
-            prompt_words=max(32, min(prompt_words, 128)),
-            max_tokens=max(2, min(max_tokens, 16)),
+            prompt_words=prompt_words,
+            max_tokens=max_tokens,
             deadline=deadline,
             probe_id=probe_id,
             phase="warmup",
@@ -616,15 +455,11 @@ def discover_concurrency(
         )
         levels.append(level)
 
-    recommendation = recommend_concurrency(
-        levels,
-        knee_fraction=knee_fraction,
-        min_success_rate=min_success_rate,
-    )
-    return {
+    diagnostics = {
         "schema": "sixcat-concurrency-curve-v1",
         "unscored": True,
         "synthetic_prompts": True,
+        "prompt_dataset": PROMPT_DATASET,
         "prompt_words": prompt_words,
         "max_tokens": max_tokens,
         "candidate_concurrency": candidates,
@@ -634,8 +469,20 @@ def discover_concurrency(
         "probe_id": probe_id,
         "warmup": warmup,
         "levels": levels,
-        **recommendation,
     }
+    try:
+        recommendation = recommend_concurrency(
+            levels, knee_fraction=knee_fraction, min_success_rate=min_success_rate,
+        )
+    except ValueError as exc:
+        raise ConcurrencyDiscoveryError(diagnostics) from exc
+    return {**diagnostics, **recommendation}
+
+
+class ConcurrencyDiscoveryError(ValueError):
+    def __init__(self, curve: dict[str, Any]):
+        super().__init__("no usable concurrency level completed within the probe budget")
+        self.curve = curve
 
 
 def confirmation_run(
@@ -650,37 +497,19 @@ def confirmation_run(
     if samples < 1:
         raise ValueError("speed confirmation samples must be positive")
     probe_id = uuid.uuid4().hex[:12]
-    warmup = run_level(
-        client,
-        concurrency=1,
-        requests=1,
-        prompt_words=max(32, min(prompt_words, 128)),
-        max_tokens=max(2, min(max_tokens, 16)),
-        deadline=deadline,
-        probe_id=probe_id,
-        phase="warmup",
-    )
     result = run_level(
-        client,
-        concurrency=concurrency,
-        requests=samples,
-        prompt_words=prompt_words,
-        max_tokens=max_tokens,
-        deadline=deadline,
-        probe_id=probe_id,
-        phase="confirmation",
+        client, concurrency=concurrency, requests=samples,
+        prompt_words=prompt_words, max_tokens=max_tokens, deadline=deadline,
+        probe_id=probe_id, phase="confirmation", warmup_requests=1,
     )
-    result["warmup"] = warmup
     result["probe_id"] = probe_id
     result["p99_sample_warning"] = result["succeeded"] < 100
     result["p99_note"] = (
-        "p99 is an interpolated empirical percentile with fewer than 100 successful requests; "
-        "use --samples 100 or more for a more meaningful tail estimate"
-        if result["succeeded"] < 100
-        else None
+        "Tail percentiles are descriptive empirical estimates with few requests; "
+        "use median, range and sample count for quick runs. Even 100 requests is not a p99 service guarantee."
+        if result["succeeded"] < 100 else None
     )
     return result
-
 
 def render_curve(curve: dict[str, Any]) -> str:
     lines = [
@@ -718,54 +547,68 @@ def render_curve(curve: dict[str, Any]) -> str:
 
 
 def render_confirmation(result: dict[str, Any]) -> str:
-    decode = result.get("effective_decode_tps") or {}
-    prefill = result.get("effective_prefill_tps") or {}
+    def rate(name: str) -> str:
+        dist = result.get(name) or {}
+        return (
+            f"p50={_fmt(dist.get('p50'))} tok/s "
+            f"range={_fmt(dist.get('min'))}..{_fmt(dist.get('max'))} "
+            f"n={dist.get('n', 0)}"
+        )
+
+    def latency(name: str) -> str:
+        dist = result.get(name) or {}
+        return (
+            f"p50={_fmt_ms(dist.get('p50'))} "
+            f"range={_fmt_ms(dist.get('min'))}..{_fmt_ms(dist.get('max'))} "
+            f"n={dist.get('n', 0)}"
+        )
+
     lines = [
         "",
         f"SPEED CONFIRMATION @ concurrency={result['concurrency']} "
         f"({result['succeeded']}/{result['requested']} successful)",
-        f"aggregate output tps (includes prefill/queue): {_fmt(result.get('aggregate_output_tps'))} tok/s",
+        "DECODE: " + rate("effective_decode_tps"),
+        "EFFECTIVE PREFILL (client; includes network/queue): " + rate("effective_prefill_tps"),
+        "TTFT (first observed generated output): " + latency("ttft"),
+        "FIRST ANSWER TOKEN (TTFO): " + latency("ttfo"),
+        "E2E (through last generated output): " + latency("e2e"),
+        "TPOT: " + latency("tpot"),
+        f"aggregate output tps (level wall; includes prefill/queue/failures): {_fmt(result.get('aggregate_output_tps'))} tok/s",
         f"request rate: {_fmt(result.get('request_rps'))} req/s",
-        "DECODE — per-stream sustained generation:",
-        f"  p50={_fmt(decode.get('p50'))}  p95={_fmt(decode.get('p95'))}  "
-        f"max={_fmt(decode.get('max'))} tok/s",
-        f"  best-sustained decode (p90): {_fmt(decode.get('p90'))} tok/s",
-        "PREFILL — client-observed effective prompt ingestion:",
-        f"  p50={_fmt(prefill.get('p50'))}  p95={_fmt(prefill.get('p95'))}  "
-        f"max={_fmt(prefill.get('max'))} tok/s (includes network/queue)",
-        f"client TTFT: p50={_fmt_ms((result['ttft']).get('p50'))} "
-        f"p95={_fmt_ms((result['ttft']).get('p95'))} "
-        f"p99={_fmt_ms((result['ttft']).get('p99'))}",
-        f"E2E latency: p50={_fmt_ms((result['e2e']).get('p50'))} "
-        f"p95={_fmt_ms((result['e2e']).get('p95'))} "
-        f"p99={_fmt_ms((result['e2e']).get('p99'))}",
-        f"TPOT: p50={_fmt_ms((result['tpot']).get('p50'))} "
-        f"p95={_fmt_ms((result['tpot']).get('p95'))} "
-        f"p99={_fmt_ms((result['tpot']).get('p99'))}",
-        f"server prefill: p5={_fmt((result['server_prefill_tps']).get('p5'))} "
-        f"p50={_fmt((result['server_prefill_tps']).get('p50'))} tok/s",
-        f"server decode: p5={_fmt((result['server_decode_tps']).get('p5'))} "
-        f"p50={_fmt((result['server_decode_tps']).get('p50'))} tok/s",
+        "actual prompt tokens: "
+        f"p50={_fmt((result.get('prompt_token_lengths') or {}).get('p50'))}, "
+        "actual completion tokens (reasoning + answer): "
+        f"p50={_fmt((result.get('completion_token_lengths') or {}).get('p50'))}",
+        f"answers started: {result.get('answer_started_requests', 0)}/{result['succeeded']}; "
+        f"output cap reached: {result.get('output_limit_requests', 0)}/{result['succeeded']}",
+        "native server prefill: " + rate("server_prefill_tps"),
+        "native server decode: " + rate("server_decode_tps"),
     ]
-    provider_ttft = (result.get("provider_ttft") or {}).get("p50")
-    if provider_ttft is not None:
-        lines.append(f"provider TTFT p50: {_fmt_ms(provider_ttft)}")
-    provider_queue = (result.get("provider_queue") or {}).get("p50")
-    if provider_queue is not None:
-        lines.append(f"provider queue p50: {_fmt_ms(provider_queue)}")
-    provider_prefill = (result.get("provider_effective_prefill_tps") or {}).get("p50")
-    if provider_prefill is not None:
-        lines.append(f"provider-effective prefill p50: {_fmt(provider_prefill)} tok/s")
-    provider_decode = (result.get("provider_effective_decode_tps") or {}).get("p50")
-    if provider_decode is not None:
-        lines.append(f"provider-effective decode p50: {_fmt(provider_decode)} tok/s")
+    for field, label in (
+        ("provider_ttft", "provider TTFT"),
+        ("provider_queue", "provider queue"),
+    ):
+        if (result.get(field) or {}).get("n", 0):
+            lines.append(label + ": " + latency(field))
+    for field, label in (
+        ("provider_effective_prefill_tps", "provider-effective prefill"),
+        ("provider_effective_decode_tps", "provider-effective decode"),
+    ):
+        if (result.get(field) or {}).get("n", 0):
+            lines.append(label + ": " + rate(field))
+    for field, counts in (result.get("observations") or {}).items():
+        if counts:
+            lines.append(field.replace("_", " ") + ": " + ", ".join(f"{key}={value}" for key, value in counts.items()))
+    if result.get("aggregate_output_tps") is None:
+        lines.append("aggregate output TPS unavailable: complete output-token counts are required for every successful request.")
     metric_status = result.get("server_metric_status")
     if isinstance(metric_status, dict) and not metric_status.get("available"):
-        lines.append(f"server metrics: unavailable for this route — {metric_status.get('reason')}")
-    if result.get("p99_sample_warning"):
-        lines.append("NOTE: p99 has <100 request samples; use --samples 100+ for stronger tail-latency evidence.")
+        lines.append(f"server metrics unavailable for this route: {metric_status.get('reason')}")
+    if result.get("tail_sample_warning") or result.get("p99_sample_warning"):
+        lines.append("NOTE: use median/range/n for this short run; p95/p99 in JSON are descriptive low-sample estimates.")
+    if result.get("output_limit_requests"):
+        lines.append("A capped generation is a throughput sample; it does not establish completed-answer latency.")
     return "\n".join(lines)
-
 
 def server_metric_status(result: dict[str, Any], server_props: dict[str, Any]) -> dict[str, Any]:
     native_fields = (
@@ -829,13 +672,27 @@ def _resolve_cli_policy(args) -> Any:
     return policy
 
 
+def _headline_source(profile: dict[str, Any]) -> tuple[dict[str, Any], int | None, str]:
+    confirmation = profile.get("confirmation")
+    if profile.get("selected_concurrency") == 1 and isinstance(confirmation, dict):
+        return confirmation, 1, "confirmation"
+    single_stream = profile.get("single_stream_confirmation")
+    if isinstance(single_stream, dict):
+        return single_stream, 1, "confirmation"
+    for level in (profile.get("curve") or {}).get("levels") or []:
+        if level.get("concurrency") == 1:
+            return level, 1, "discovery-only"
+    return confirmation or {}, profile.get("selected_concurrency"), "confirmation"
+
+
 def _profile_level(profile: dict[str, Any], concurrency: int) -> dict[str, Any] | None:
-    curve = profile.get("curve") or {}
-    for level in curve.get("levels") or []:
-        if int(level.get("concurrency", -1)) == concurrency:
+    source, selected, _ = _headline_source(profile)
+    if selected == concurrency:
+        return source
+    for level in (profile.get("curve") or {}).get("levels") or []:
+        if level.get("concurrency") == concurrency:
             return level
     return None
-
 
 def _summary_number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -855,168 +712,127 @@ def _fmt_copy_ms(value_s: Any) -> str:
 
 
 def build_speed_summary(profiles: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Compact, copy-ready headline metrics derived from the full profile receipts."""
-    decode_profile = profiles.get("decode")
-    prefill_profile = profiles.get("prefill")
-    balanced_profile = profiles.get("balanced")
+    """Headline medians are from confirmed requests, with workload and sample counts."""
+    def select(names: tuple[str, ...]) -> tuple[str | None, dict[str, Any]]:
+        for name in names:
+            if name in profiles:
+                return name, profiles[name]
+        return None, {}
 
-    decode_source = None
-    decode_source_concurrency = None
-    if decode_profile:
-        decode_source = _profile_level(decode_profile, 1)
-        if decode_source is not None:
-            decode_source_concurrency = 1
-        else:
-            decode_source = decode_profile.get("confirmation")
-            decode_source_concurrency = decode_profile.get("selected_concurrency")
-    decode_dist = (decode_source or {}).get("effective_decode_tps") or {}
+    decode_name, decode_profile = select(("decode", "quick", "custom", "balanced", "prefill"))
+    prefill_name, prefill_profile = select(("prefill", "quick", "custom", "balanced", "decode"))
+    latency_name, latency_profile = select(("quick", "balanced", "custom", "decode", "prefill"))
+    decode_source, decode_c, decode_phase = _headline_source(decode_profile)
+    prefill_source, prefill_c, prefill_phase = _headline_source(prefill_profile)
+    latency_source = latency_profile.get("confirmation") or {}
+    latency_c = latency_profile.get("selected_concurrency")
 
-    prefill_source = None
-    prefill_source_concurrency = None
-    if prefill_profile:
-        prefill_source = _profile_level(prefill_profile, 1)
-        if prefill_source is not None:
-            prefill_source_concurrency = 1
-        else:
-            prefill_source = prefill_profile.get("confirmation")
-            prefill_source_concurrency = prefill_profile.get("selected_concurrency")
-    prefill_dist = (prefill_source or {}).get("effective_prefill_tps") or {}
+    def rate(source: dict[str, Any], field: str, name: str | None, concurrency: int | None, phase: str) -> dict[str, Any]:
+        dist = source.get(field) or {}
+        return {
+            "source_profile": name, "source_concurrency": concurrency, "source_phase": phase,
+            "n": dist.get("n", 0),
+            "min_tps": _summary_number(dist.get("min")),
+            "max_tps": _summary_number(dist.get("max")),
+            "p50_tps": _summary_number(dist.get("p50")),
+            "p95_tps": _summary_number(dist.get("p95")),
+        }
 
-    balanced_confirmation = (balanced_profile or {}).get("confirmation") or {}
-    balanced_curve = (balanced_profile or {}).get("curve") or {}
-    balanced_concurrency = (balanced_profile or {}).get("selected_concurrency")
-    ttft = balanced_confirmation.get("ttft") or {}
+    def latency(field: str) -> dict[str, Any]:
+        dist = latency_source.get(field) or {}
+        return {
+            "profile": latency_name, "concurrency": latency_c, "n": dist.get("n", 0),
+            **{
+                f"{key}_ms": float(dist[key]) * 1000.0 if _summary_number(dist.get(key)) is not None else None
+                for key in ("min", "p50", "p95", "p99", "max")
+            },
+        }
 
-    max_usable = balanced_curve.get("max_usable_concurrency")
-    max_usable_evidence = "measured-balanced-curve" if max_usable is not None else "not-measured"
-
+    capacity_profile = profiles.get("balanced") or latency_profile
+    capacity_confirmation = capacity_profile.get("confirmation") or {}
+    capacity_curve = capacity_profile.get("curve") or {}
+    max_usable = capacity_curve.get("max_usable_concurrency")
+    observations = latency_source.get("observations") or {}
+    notes = [
+        "Client prefill is effective throughput, not isolated engine prefill.",
+        "Output counts include reasoning and answer tokens; capped runs do not prove answer completion.",
+    ]
+    if latency_source.get("tail_sample_warning") or latency_source.get("succeeded", 0) < 100:
+        notes.append("Small-sample p95/p99 values are descriptive; use median, range and n.")
+    if decode_phase == "discovery-only" or prefill_phase == "discovery-only":
+        notes.append("A single-stream headline has discovery-only evidence; no completed C=1 confirmation was available.")
+    for field in ("decode_metric_status", "prefill_metric_status", "ttfo_metric_status", "reasoning_observation"):
+        counts = observations.get(field) or {}
+        if counts:
+            notes.append(field.replace("_", " ") + ": " + ", ".join(f"{key}={value}" for key, value in counts.items()))
+    balanced = profiles.get("balanced") or {}
     summary = {
-        "schema": "sixcat-speed-summary-v1",
-        "decode": {
-            "source_concurrency": decode_source_concurrency,
-            "max_tps": _summary_number(decode_dist.get("max")),
-            "p50_tps": _summary_number(decode_dist.get("p50")),
-            "p95_tps": _summary_number(decode_dist.get("p95")),
-            "best_sustained_p90_tps": _summary_number(decode_dist.get("p90")),
-        },
+        "schema": "sixcat-speed-summary-v2",
+        "decode": rate(decode_source, "effective_decode_tps", decode_name, decode_c, decode_phase),
         "prefill": {
-            "source_concurrency": prefill_source_concurrency,
-            "p50_tps": _summary_number(prefill_dist.get("p50")),
-            "p95_tps": _summary_number(prefill_dist.get("p95")),
-            "max_tps": _summary_number(prefill_dist.get("max")),
+            **rate(prefill_source, "effective_prefill_tps", prefill_name, prefill_c, prefill_phase),
+            "metric": "client-effective-prefill",
+        },
+        "ttft": latency("ttft"),
+        "ttfo": latency("ttfo"),
+        "serving": {
+            "profile": "balanced" if profiles.get("balanced") else latency_name,
+            "aggregate_output_tps": _summary_number(capacity_confirmation.get("aggregate_output_tps")),
+            "concurrency": capacity_profile.get("selected_concurrency"),
         },
         "balanced_serving": {
-            "aggregate_output_tps": _summary_number(balanced_confirmation.get("aggregate_output_tps")),
-            "concurrency": balanced_concurrency,
-        },
-        "ttft": {
-            "profile": "balanced" if balanced_profile else None,
-            "p50_ms": (_summary_number(ttft.get("p50")) * 1000.0) if _summary_number(ttft.get("p50")) is not None else None,
-            "p95_ms": (_summary_number(ttft.get("p95")) * 1000.0) if _summary_number(ttft.get("p95")) is not None else None,
-            "p99_ms": (_summary_number(ttft.get("p99")) * 1000.0) if _summary_number(ttft.get("p99")) is not None else None,
+            "aggregate_output_tps": _summary_number((balanced.get("confirmation") or {}).get("aggregate_output_tps")),
+            "concurrency": balanced.get("selected_concurrency"),
         },
         "max_usable_concurrency": max_usable,
-        "max_usable_concurrency_evidence": max_usable_evidence,
+        "max_usable_concurrency_evidence": "largest-tested-successful-level" if max_usable is not None else "not-measured",
+        "thinking_requested": latency_source.get("thinking_requested"),
+        "reasoning_observations": observations.get("reasoning_observation") or {},
+        "measurement_notes": notes,
     }
-
     lines = []
-    if decode_profile:
+    if decode_name:
+        item = summary["decode"]
         lines.append(
-            f"**Decode:** {_fmt_copy_tps(summary['decode']['max_tps'])} tok/s max, "
-            f"{_fmt_copy_tps(summary['decode']['p50_tps'])} tok/s p50"
+            f"**Decode:** {_fmt_copy_tps(item['p50_tps'])} tok/s p50 "
+            f"(range {_fmt_copy_tps(item['min_tps'])}–{_fmt_copy_tps(item['max_tps'])}; "
+            f"n={item['n']}; C={item['source_concurrency']}; {item['source_profile']})"
         )
-    if prefill_profile:
+    if prefill_name:
+        item = summary["prefill"]
         lines.append(
-            f"**Prefill:** {_fmt_copy_tps(summary['prefill']['p50_tps'])} tok/s p50"
+            f"**Effective prefill:** {_fmt_copy_tps(item['p50_tps'])} tok/s p50 "
+            f"(n={item['n']}; C={item['source_concurrency']}; {item['source_profile']})"
         )
-    if balanced_profile:
-        aggregate = _fmt_copy_tps(summary["balanced_serving"]["aggregate_output_tps"])
-        concurrency = summary["balanced_serving"]["concurrency"]
-        lines.append(
-            f"**Balanced serving:** {aggregate} tok/s aggregate @ C={concurrency if concurrency is not None else 'n/a'}"
-        )
-        lines.append(
-            f"**TTFT:** {_fmt_copy_ms(ttft.get('p50'))} ms p50 / "
-            f"{_fmt_copy_ms(ttft.get('p95'))} ms p95"
-        )
-        lines.append(
-            f"**Max usable concurrency:** {max_usable if max_usable is not None else 'n/a'}"
-        )
+    if latency_name:
+        item = summary["ttft"]
+        lines.append(f"**TTFT:** {_fmt_copy_ms((latency_source.get('ttft') or {}).get('p50'))} ms p50 (n={item['n']}; C={latency_c})")
+        answer = summary["ttfo"]
+        lines.append(f"**First answer (TTFO):** {_fmt_copy_ms((latency_source.get('ttfo') or {}).get('p50'))} ms p50 (n={answer['n']})")
+        if summary["thinking_requested"] is not None:
+            lines.append("**Thinking requested:** " + ("on" if summary["thinking_requested"] else "off"))
+    if max_usable is not None:
+        lines.append(f"**Largest tested successful concurrency:** {max_usable}")
+    if profiles.get("balanced") or (latency_c is not None and latency_c > 1):
+        serving = summary["serving"]
+        lines.append(f"**Serving throughput:** {_fmt_copy_tps(serving['aggregate_output_tps'])} tok/s aggregate @ C={serving['concurrency']}")
     summary["copy_paste"] = "\n".join(lines)
     return summary
 
 
 def render_suite_summary(profiles: dict[str, dict[str, Any]]) -> str:
-    lines = [
-        "",
-        "SIXCAT SPEED SUITE — workload-specific headlines",
-        "-" * 76,
-    ]
-    decode = profiles.get("decode")
-    if decode:
-        # Single-stream C=1 is the honest headline for maximum per-stream decode.
-        c1 = _profile_level(decode, 1)
-        source = c1 or decode["confirmation"]
-        source_label = "single-stream C=1" if c1 is not None else f"C={decode['selected_concurrency']}"
-        dist = source.get("effective_decode_tps") or {}
-        lines.append(
-            f"DECODE ({source_label}): "
-            f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
-            f"max={_fmt(dist.get('max'))} best-sustained(p90)={_fmt(dist.get('p90'))} tok/s"
-        )
-        confirm = decode["confirmation"]
-        lines.append(
-            "DECODE serving knee: "
-            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
-            f"@ C={decode['selected_concurrency']} (includes prefill/queue)"
-        )
-    balanced = profiles.get("balanced")
-    if balanced:
-        confirm = balanced["confirmation"]
-        lines.append(
-            "BALANCED: "
-            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
-            f"(includes prefill/queue), TTFT p95={_fmt_ms((confirm.get('ttft') or {}).get('p95'))} "
-            f"@ C={balanced['selected_concurrency']}"
-        )
-    prefill = profiles.get("prefill")
-    if prefill:
-        # Use C=1 for the single-request prompt-ingestion headline; the selected
-        # concurrency remains available separately in the profile receipt.
-        c1 = _profile_level(prefill, 1)
-        source = c1 or prefill["confirmation"]
-        source_label = "single-stream C=1" if c1 is not None else f"C={prefill['selected_concurrency']}"
-        dist = source.get("effective_prefill_tps") or {}
-        lines.append(
-            f"PREFILL ({source_label}): "
-            f"p50={_fmt(dist.get('p50'))} p95={_fmt(dist.get('p95'))} "
-            f"max={_fmt(dist.get('max'))} effective tok/s"
-        )
-        confirm = prefill["confirmation"]
-        lines.append(
-            "PREFILL serving knee: "
-            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
-            f"@ C={prefill['selected_concurrency']} (includes decode/queue)"
-        )
-    custom = profiles.get("custom")
-    if custom:
-        confirm = custom["confirmation"]
-        lines.append(
-            "CUSTOM: "
-            f"aggregate={_fmt(confirm.get('aggregate_output_tps'))} tok/s "
-            f"@ C={custom['selected_concurrency']}"
-        )
-    lines.append("-" * 76)
-    lines.append("Decode, balanced, and prefill are intentionally separate workloads; do not compare their aggregate TPS as the same metric.")
-    return "\n".join(lines)
-
+    summary = build_speed_summary(profiles)
+    return "\n".join([
+        "", "SIXCAT SPEED — confirmed workload-specific measurements", "-" * 76,
+        summary["copy_paste"], "-" * 76, *summary["measurement_notes"],
+    ])
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="sixcat speed",
         description=(
-            "Run workload-specific serving benchmarks. Default runs decode, balanced, "
-            "and prefill profiles; each profile discovers its own concurrency knee."
+            "Run a quick thinking-on single-user benchmark by default. "
+            "Use --profile all for workload-specific concurrency sweeps."
         ),
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8085/v1")
@@ -1029,14 +845,16 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--min-p", type=float, default=None)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--thinking", choices=("on", "off"), default="off")
+    parser.add_argument("--thinking", choices=("on", "off"), default="on", help="Requested reasoning mode; default on. Effective behavior is observed separately.")
+    parser.add_argument("--reasoning-visibility", choices=("auto", "streamed", "hidden"), default="auto", help="Optional disclosure of provider reasoning visibility; default auto uses stream evidence.")
+    parser.add_argument("--per-chunk-usage", action="store_true", help="Request cumulative chunk usage for first-chunk token correction where supported.")
     parser.add_argument(
         "--profile",
-        choices=("all", "decode", "balanced", "prefill", "custom"),
-        default="all",
+        choices=("quick", "all", "decode", "balanced", "prefill", "custom"),
+        default="quick",
         help=(
-            "Speed workload. Default all runs decode + balanced + prefill. "
-            "decode=short prompt/long output; prefill=long prompt/short output."
+            "Default quick: C=1, 5 measured requests, thinking on, 256 output-token cap. "
+            "all runs decode + balanced + prefill with optional capacity tuning."
         ),
     )
     parser.add_argument(
@@ -1045,13 +863,14 @@ def main(argv: list[str]) -> int:
         default=None,
         help="Skip per-profile curve discovery and confirm this fixed concurrency.",
     )
+    parser.add_argument("--auto-concurrency", action="store_true", help="Opt into concurrency discovery for quick; other profiles discover by default unless --concurrency is set.")
     parser.add_argument("--candidates", default="1,2,4,8")
     parser.add_argument("--curve-seconds", type=float, default=120.0)
     parser.add_argument("--curve-requests-per-worker", type=int, default=2)
     parser.add_argument("--curve-min-requests", type=int, default=4)
     parser.add_argument("--knee-fraction", type=float, default=0.90)
     parser.add_argument("--min-success-rate", type=float, default=0.95)
-    parser.add_argument("--samples", type=int, default=DEFAULT_CONFIRM_SAMPLES)
+    parser.add_argument("--samples", type=int, default=None, help="Measured requests: default 5 for quick, 32 for other profiles.")
     parser.add_argument(
         "--prompt-words",
         type=int,
@@ -1062,17 +881,24 @@ def main(argv: list[str]) -> int:
         "--max-tokens",
         type=int,
         default=None,
-        help="Override output length for one named profile, or required with --profile custom.",
+        help="Override the total output-token cap for one named profile, or required with --profile custom.",
     )
     parser.add_argument(
         "--max-seconds",
         type=float,
-        default=600.0,
-        help="Shared total speed-suite budget. Default 600 seconds for the three-profile suite.",
+        default=None,
+        help="Shared total budget including metadata and warmup; default 120s quick, 600s other profiles.",
     )
     parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
+    if args.samples is None:
+        args.samples = DEFAULT_QUICK_SAMPLES if args.profile == "quick" else DEFAULT_CONFIRM_SAMPLES
+    if args.max_seconds is None:
+        args.max_seconds = 120.0 if args.profile == "quick" else 600.0
+    if args.auto_concurrency and args.concurrency is not None:
+        parser.error("--auto-concurrency cannot be combined with --concurrency")
+    use_curve = args.concurrency is None and (args.auto_concurrency or args.profile != "quick")
 
     if args.concurrency is not None and args.concurrency < 1:
         parser.error("--concurrency must be >= 1")
@@ -1103,7 +929,7 @@ def main(argv: list[str]) -> int:
 
     try:
         policy = _resolve_cli_policy(args)
-        candidates = parse_candidates(args.candidates) if args.concurrency is None else [args.concurrency]
+        candidates = parse_candidates(args.candidates) if use_curve else [args.concurrency or 1]
         workloads = resolve_workloads(
             args.profile,
             prompt_words=args.prompt_words,
@@ -1113,111 +939,168 @@ def main(argv: list[str]) -> int:
         parser.error(str(exc))
 
     client = ChatClient(
-        args.base_url,
-        args.model,
-        policy,
-        api_key=args.api_key,
+        args.base_url, args.model, policy, api_key=args.api_key,
         timeout=args.request_timeout,
     )
-    server_props = fetch_server_props(args.base_url, args.api_key)
+    client.speed_options = {
+        "per_chunk_usage": args.per_chunk_usage,
+        "reasoning_visibility": args.reasoning_visibility,
+    }
     total = TimeBudget(args.max_seconds)
+    # These two metadata reads share the suite budget as well as generation.
+    metadata_timeout = max(0.001, min(3.0, float(total.remaining() or 0.001) / 2.0))
+    server_props = fetch_server_props(args.base_url, args.api_key, timeout=metadata_timeout)
     profiles: dict[str, dict[str, Any]] = {}
+    errors: list[dict[str, str]] = []
     exit_code = 0
-
-    for workload in workloads:
-        name = str(workload["name"])
-        prompt_words = int(workload["prompt_words"])
-        max_tokens = int(workload["max_tokens"])
-        if total.expired():
-            parser.error(f"total speed-suite budget expired before profile {name}")
-
-        print(
-            f"\n=== {name.upper()} PROFILE ===\n"
-            f"workload: prompt_words={prompt_words} max_tokens={max_tokens}\n"
-            f"purpose: {workload['purpose']}",
-            flush=True,
-        )
-
-        curve = None
-        if args.concurrency is None:
-            remaining = total.remaining()
-            curve_seconds = args.curve_seconds if remaining is None else min(args.curve_seconds, remaining)
-            if curve_seconds <= 0:
-                parser.error(f"speed-suite budget expired before {name} concurrency curve")
-            try:
-                curve = discover_concurrency(
-                    client,
-                    candidates=candidates,
-                    max_seconds=curve_seconds,
-                    prompt_words=prompt_words,
-                    max_tokens=max_tokens,
-                    requests_per_worker=args.curve_requests_per_worker,
-                    min_requests=args.curve_min_requests,
-                    knee_fraction=args.knee_fraction,
-                    min_success_rate=args.min_success_rate,
-                    outer_deadline=total.deadline,
-                )
-            except (ValueError, TimeoutError) as exc:
-                parser.error(f"{name} concurrency discovery failed: {exc}")
-            selected = int(curve["recommended_concurrency"])
-            print(render_curve(curve))
-        else:
-            selected = int(args.concurrency)
-
-        if total.expired():
-            parser.error(f"speed-suite budget expired before {name} confirmation")
-        confirmation = confirmation_run(
-            client,
-            concurrency=selected,
-            samples=args.samples,
-            prompt_words=prompt_words,
-            max_tokens=max_tokens,
-            deadline=total.deadline,
-        )
-        confirmation["server_metric_status"] = server_metric_status(confirmation, server_props)
-        print(render_confirmation(confirmation))
-
-        profile_result = {
-            "workload": {
-                "profile": name,
-                "prompt_words": prompt_words,
-                "max_tokens": max_tokens,
-                "purpose": workload["purpose"],
-            },
-            "curve": curve,
-            "selected_concurrency": selected,
-            "confirmation": confirmation,
-            "server_metric_status": confirmation["server_metric_status"],
-        }
-        profiles[name] = profile_result
-        if confirmation["succeeded"] != confirmation["requested"]:
-            exit_code = 2
-
-    print(render_suite_summary(profiles))
     report: dict[str, Any] = {
         "schema": SPEED_SCHEMA,
         "unscored": True,
         "model": args.model,
         "base_url": args.base_url.rstrip("/"),
         "requested_profile": args.profile,
+        "requested_profiles": [str(workload["name"]) for workload in workloads],
         "policy": policy.to_dict(),
         "policy_fingerprint": policy.fingerprint,
+        "thinking_requested": args.thinking,
+        "reasoning_visibility": args.reasoning_visibility,
+        "per_chunk_usage_requested": args.per_chunk_usage,
+        "prompt_dataset": PROMPT_DATASET,
+        "samples_per_confirmation": args.samples,
+        "max_seconds": args.max_seconds,
         "server_props": server_props,
         "profiles": profiles,
-        "total_elapsed_s": time.monotonic() - total.start,
+        "errors": errors,
     }
-    if len(profiles) == 1:
-        only = next(iter(profiles.values()))
-        report["workload"] = only["workload"]
-        report["curve"] = only["curve"]
-        report["selected_concurrency"] = only["selected_concurrency"]
-        report["confirmation"] = only["confirmation"]
 
-    # Keep this last in insertion order so saved JSON ends with the human-facing
-    # headline receipt instead of making users reconstruct it from profile details.
-    report["summary"] = build_speed_summary(profiles)
+    def persist(*, final: bool = False) -> None:
+        incomplete = [
+            name for name in report["requested_profiles"]
+            if profiles.get(name, {}).get("status") != "completed"
+        ]
+        report["status"] = ("incomplete" if incomplete or errors else "completed") if final else "running"
+        report["incomplete_profiles"] = incomplete
+        report["total_elapsed_s"] = time.monotonic() - total.start
+        report["deadline_reached"] = total.expired()
+        if len(workloads) == 1 and profiles:
+            only = next(iter(profiles.values()))
+            for key in ("workload", "curve", "selected_concurrency", "confirmation"):
+                report[key] = only.get(key)
+        report.pop("summary", None)
+        report["summary"] = build_speed_summary(profiles)
+        if args.out:
+            atomic_write_json(args.out, report)
 
+    print(
+        f"SIXCAT SPEED: profile={args.profile} thinking requested={args.thinking} "
+        f"sampling={policy.name} samples={args.samples} budget={args.max_seconds:g}s",
+        flush=True,
+    )
+    if args.policy == "vendor" and not policy.source.startswith("vendor:"):
+        print("Vendor policy was not matched; the receipt records the strict sampling fallback.", flush=True)
+    print("Output caps count reasoning plus answer tokens; actual prompt/completion counts are recorded.", flush=True)
+    persist()
+
+    for workload in workloads:
+        name = str(workload["name"])
+        prompt_words = int(workload["prompt_words"])
+        max_tokens = int(workload["max_tokens"])
+        profile_result: dict[str, Any] = {
+            "workload": {
+                "profile": name, "prompt_words": prompt_words,
+                "max_tokens": max_tokens, "purpose": workload["purpose"],
+                "prompt_length_unit": "body_words",
+                "prompt_dataset": PROMPT_DATASET,
+                "output_length_policy": "maximum-total-generated-tokens",
+            },
+            "curve": None,
+            "selected_concurrency": args.concurrency or (None if use_curve else 1),
+            "status": "running",
+            "request_parameters": {
+                key: value for key, value in _policy_payload(client, "", max_tokens).items()
+                if key != "messages"
+            },
+        }
+        profiles[name] = profile_result
+        print(
+            f"\n=== {name.upper()} PROFILE ===\n"
+            f"workload: prompt_words={prompt_words} max_tokens={max_tokens}\n"
+            f"purpose: {workload['purpose']}", flush=True,
+        )
+        try:
+            if total.expired():
+                raise TimeoutError("suite deadline reached before profile")
+            if use_curve:
+                remaining = float(total.remaining() or 0.0)
+                curve = discover_concurrency(
+                    client, candidates=candidates, max_seconds=min(args.curve_seconds, remaining),
+                    prompt_words=prompt_words, max_tokens=max_tokens,
+                    requests_per_worker=args.curve_requests_per_worker,
+                    min_requests=args.curve_min_requests,
+                    knee_fraction=args.knee_fraction, min_success_rate=args.min_success_rate,
+                    outer_deadline=total.deadline,
+                )
+                profile_result["curve"] = curve
+                selected = int(curve["recommended_concurrency"])
+                profile_result["selected_concurrency"] = selected
+                print(render_curve(curve))
+            else:
+                selected = int(args.concurrency or 1)
+
+            # A C=1 discovery sample is not a substitute for the headline confirmation.
+            if use_curve and selected != 1 and name in {"decode", "prefill", "quick"}:
+                single = confirmation_run(
+                    client, concurrency=1, samples=args.samples,
+                    prompt_words=prompt_words, max_tokens=max_tokens, deadline=total.deadline,
+                )
+                single["thinking_requested"] = policy.thinking
+                single["server_metric_status"] = server_metric_status(single, server_props)
+                profile_result["single_stream_confirmation"] = single
+                print(render_confirmation(single))
+                persist()
+
+            if total.expired():
+                raise TimeoutError("suite deadline reached before confirmation")
+            confirmation = confirmation_run(
+                client, concurrency=selected, samples=args.samples,
+                prompt_words=prompt_words, max_tokens=max_tokens, deadline=total.deadline,
+            )
+            confirmation["thinking_requested"] = policy.thinking
+            confirmation["server_metric_status"] = server_metric_status(confirmation, server_props)
+            profile_result["confirmation"] = confirmation
+            profile_result["server_metric_status"] = confirmation["server_metric_status"]
+            print(render_confirmation(confirmation))
+            checks = [confirmation]
+            if "single_stream_confirmation" in profile_result:
+                checks.append(profile_result["single_stream_confirmation"])
+            complete = all(check["succeeded"] == check["requested"] for check in checks)
+            profile_result["status"] = "completed" if complete else "incomplete"
+            if not complete:
+                exit_code = 2
+            persist()
+            if total.expired():
+                break
+        except (ValueError, TimeoutError) as exc:
+            if isinstance(exc, ConcurrencyDiscoveryError):
+                profile_result["curve"] = exc.curve
+            profile_result["status"] = "incomplete"
+            profile_result["error_type"] = type(exc).__name__
+            errors.append({"profile": name, "error_type": type(exc).__name__})
+            exit_code = 2
+            print(f"{name}: incomplete ({type(exc).__name__}); retaining collected measurements.", flush=True)
+            persist()
+            if total.expired():
+                break
+        except KeyboardInterrupt:
+            profile_result["status"] = "incomplete"
+            errors.append({"profile": name, "error_type": "KeyboardInterrupt"})
+            persist(final=True)
+            return 130
+
+    persist(final=True)
+    if report["status"] != "completed":
+        exit_code = 2
+    print(render_suite_summary(profiles))
     if args.out:
-        atomic_write_json(args.out, report)
-        print(f"\nwrote {args.out}")
+        print(f"\nwrote {args.out} ({report['status']})")
     return exit_code

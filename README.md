@@ -269,66 +269,163 @@ python -m sixcat \
   --calibration-knee-fraction 0.90
 ```
 
-### Speed-only suite: one command, three legitimate workloads
+### Quick speed benchmark
 
-For users who want a real serving-performance receipt without running the quality benchmark, the default command now runs **three intentionally different workloads**:
-
-```bash
-python -m sixcat speed \
-  --base-url http://127.0.0.1:8000/v1 \
-  --model YOUR_MODEL \
-  --out results/model-speed.json
-```
-
-| Profile | Default workload | What the headline means |
-|---|---|---|
-| **decode** | ~32 prompt words + up to 512 generated tokens | Sustained **single-stream decode** speed; headline comes from C=1 so batching does not make the model look artificially slow |
-| **balanced** | ~256 prompt words + up to 128 generated tokens | Realistic mixed serving throughput, TTFT and the concurrency knee |
-| **prefill** | ~2048 prompt words + up to 32 generated tokens | Long-prompt ingestion / effective prefill speed without a long decode tail dominating wall time |
-
-Each profile discovers its **own** concurrency curve with the same workload it later confirms. The curve and confirmation no longer use different output lengths. By default a concurrency level must complete at least **95%** of its requests to participate in knee selection; the report also records the maximum usable concurrency and explicitly marks rejected levels.
-
-The terminal headline separates metrics that answer different questions:
-
-- **Decode:** per-stream p50, p95, max and p90 "best sustained" decode tok/s;
-- **Balanced:** aggregate output tok/s at the selected serving knee plus TTFT;
-- **Prefill:** single-stream effective prompt-ingestion p50/p95/max;
-- **Aggregate output TPS** is labeled as a level-wall metric that includes prefill, queueing and failure wall time; it is not presented as the model's raw decode ceiling.
-
-You can run only one workload when needed:
-
-```bash
-python -m sixcat speed --model YOUR_MODEL --profile decode
-python -m sixcat speed --model YOUR_MODEL --profile balanced
-python -m sixcat speed --model YOUR_MODEL --profile prefill
-```
-
-Or define an explicit workload:
+Run a short benchmark against a streaming OpenAI-compatible endpoint:
 
 ```bash
 python -m sixcat speed \
+  --base-url http://127.0.0.1:8085/v1 \
   --model YOUR_MODEL \
-  --profile custom \
-  --prompt-words 64 \
-  --max-tokens 1024
+  --out speed.json
 ```
 
-A fixed `--concurrency N` skips curve discovery; otherwise each profile can choose a different serving knee. `--candidates 1,2,4,8,16`, `--knee-fraction`, and `--min-success-rate` remain available for deeper tuning.
+**Thinking is requested on by default.** The default `quick` profile runs at
+concurrency 1: one excluded warmup using the measured workload shape, followed by
+five measured requests. Warmup and measurement share an HTTP client; actual
+connection reuse also depends on the server. The shared 120-second budget includes
+metadata reads, warmup and measurement. Slow endpoints may not finish all five
+requests; partial results are saved with incomplete status and a nonzero exit.
+Local cleanup and saving can take a little longer.
 
-Reported metrics include client TTFT/E2E/TPOT p50/p95/p99, aggregate output tok/s, request rate, effective prefill/decode rates, and native provider/server metrics when available. llama.cpp can expose native prompt/decode timings in its response, while current vLLM can return per-request TTFT, generation/decode time, queue time, mean ITL and output throughput when started with `--enable-per-request-metrics`. When the selected route exposes none of those fields, SixCat prints **"server metrics unavailable for this route"** instead of leaving unexplained nulls.
+| Quick-profile setting | Default |
+|---|---|
+| Profile | `quick` |
+| Thinking request | On |
+| Concurrency | 1 |
+| Excluded warmup | One request using the measured workload shape |
+| Measured requests | 5 |
+| Prompt body | 512 words, plus task instructions and the chat template |
+| Generation cap | 256 tokens per request |
+| Total time budget | 120 seconds |
+| Headline statistics | Median, observed range and contributing sample count |
 
-With fewer than 100 successful confirmation requests, p99 is explicitly marked as a low-sample interpolated tail estimate. Use `--samples 100` or more when p99 is itself an acceptance criterion.
+Input words are not model tokens. Actual prompt, completion, cached and reasoning
+token counts are recorded when supplied by the endpoint. The generation cap is an
+upper bound, not a fixed output length. On endpoints with a combined completion
+budget, it includes reasoning and answer tokens. A request can finish early or
+reach its cap while still reasoning. A capped generation is a valid bounded
+throughput sample; it does not establish completed-answer latency. The report
+shows whether answer output began and whether the output cap was reached.
 
-The saved JSON ends with a `summary` object containing the headline raw values plus a ready-to-copy `copy_paste` string, for example:
+#### Thinking and deployment settings
 
-```text
-**Decode:** 81.2 tok/s max, 77.6 tok/s p50
-**Prefill:** 1,940.0 tok/s p50
-**Balanced serving:** 132.0 tok/s aggregate @ C=4
-**TTFT:** 390 ms p50 / 710 ms p95
-**Max usable concurrency:** 4
+Keep thinking, reasoning effort, sampling, model, quantization and
+speculative-decoding settings consistent when comparing deployments or acceleration
+methods. SixCat records the requested policy separately from evidence of reasoning:
+sending a parameter does not prove that a model honored it. Missing telemetry does
+not prove thinking was off.
+
+The existing strict sampling policy remains the default. Select `--policy vendor`
+for SixCat's known model-family recommendations, or explicitly provide the custom
+settings used by your deployment. An unmatched vendor family falls back to strict
+sampling, and the receipt discloses that fallback.
+
+For an explicitly non-thinking comparison, add `--thinking off`:
+
+```bash
+python -m sixcat speed --model YOUR_MODEL --thinking off --out speed-thinking-off.json
 ```
 
+`--reasoning-visibility auto` uses available stream and usage evidence. When you
+know the endpoint's transport behavior but its telemetry is insufficient, you can
+declare `--reasoning-visibility streamed` or `hidden`. Declarations are recorded
+separately from observed evidence.
+
+#### What the measurements mean
+
+| Measurement | Interpretation |
+|---|---|
+| Client TTFT | Request start to first received generated output, including streamed reasoning. Includes network, queueing, prompt processing and first-output generation. |
+| First answer output (TTFO) | Request start to the first answer output distinguishable from reasoning. It can be unavailable if that boundary cannot be identified or the cap is reached first. |
+| Effective decode speed | Generated tokens after the first output chunk divided by the interval from the first to the last generated-output chunk, using compatible counts and observable timing. |
+| Effective prefill speed | Prompt tokens divided by client TTFT when the first generated output is observable. Includes the overhead contained in TTFT; it is not isolated engine prefill. |
+| Native prefill/decode speed | Server-provided timing and token-rate information, kept separate from client estimates. |
+| Aggregate throughput | Successful generated tokens divided by the measured batch interval, including queueing and failures. Requires token counts for every successful request. |
+
+Usage-only messages, empty role deltas, heartbeats, completion signals and response
+cleanup do not extend the generated-output interval. SixCat requires valid
+completion evidence and rejects explicit stream errors or interrupted output
+without that evidence.
+
+Hidden reasoning before the first streamed answer does not reveal the engine's
+first-token time. SixCat avoids dividing hidden reasoning tokens by only the later
+visible-answer interval, or treating the hidden-thinking wait as pure prefill.
+Missing or incompatible counts and insufficient timing produce unavailable or
+explicitly qualified rates. Native timings remain independently available when
+the endpoint provides them.
+
+The conventional client decode estimate subtracts one token for the first output
+when its exact count is unavailable. `--per-chunk-usage` requests continuous usage
+metadata where supported, allowing correction for multiple tokens in the first
+chunk. Capability fallbacks are recorded. Stream chunks are not assumed to be
+individual tokens; a single buffered output chunk cannot establish a meaningful
+client decode interval.
+
+These definitions follow the distinction between client and engine measurements
+used in [NVIDIA AIPerf's metrics reference](https://docs.nvidia.com/aiperf/latest/reference/ai-perf-metrics-reference)
+and [vLLM's benchmark CLI](https://docs.vllm.ai/en/stable/benchmarking/cli/).
+Reasoning controls and visibility are model- and endpoint-specific; see
+[vLLM's reasoning documentation](https://docs.vllm.ai/en/latest/features/reasoning_outputs/).
+For engine-native prompt processing and token generation, see
+[llama-bench](https://github.com/ggml-org/llama.cpp/blob/master/tools/llama-bench/README.md).
+
+#### Workload and comparison limits
+
+The versioned `sixcat-speed-prose-code-v1` workload uses synthetic prose and code
+tasks with unique early request markers. This reduces reuse of the large prompt
+body; it does not guarantee that every server cache is disabled. Preserve the
+workload identifier, actual lengths, cache information and count sources when
+comparing results. The workload is a reproducible quick check, not a substitute
+for a representative application trace.
+
+Five measurements give a quick view of typical performance. Headlines use median,
+observed range and contributing sample count. Raw p95/p99 values are descriptive
+small-sample estimates, not reliable tail-latency or service-level evidence. An API
+benchmark measures the endpoint, deployment, network, workload and client together.
+A short capped reasoning run may never reach the answer.
+
+#### Optional serving-capacity suite
+
+Use the larger suite to explore concurrency and serving capacity:
+
+```bash
+python -m sixcat speed \
+  --base-url http://127.0.0.1:8085/v1 \
+  --model YOUR_MODEL \
+  --profile all \
+  --out speed-capacity.json
+```
+
+`--profile all` selects decode, balanced and prefill with automatic concurrency
+discovery, 32 requests per confirmation and a default shared budget of 600 seconds.
+When discovery selects concurrency above 1, decode and prefill also receive a
+separate concurrency-1 confirmation for their single-stream headlines. Those
+confirmations use the same sample count and share the suite budget. Confirmation
+takes precedence over the small discovery sample. Partial reports label
+discovery-only evidence when a confirmation could not run.
+
+| Profile | Prompt-body words | Output-token cap | Purpose |
+|---|---:|---:|---|
+| `quick` | 512 | 256 | Short single-user latency and generation check |
+| `decode` | 32 | 512 | Short prompt and longer generation |
+| `balanced` | 256 | 128 | Mixed prompt/generation serving workload |
+| `prefill` | 2,048 | 32 | Long prompt and short generation |
+
+Named decode, balanced and prefill profiles discover concurrency by default.
+`--auto-concurrency` opts the quick profile into discovery. `--concurrency N`
+selects a fixed concurrency instead. Use `--samples N` and `--max-seconds N` to
+set the confirmation count and total budget. `--profile custom --prompt-words N
+--max-tokens N` selects explicit workload limits.
+
+The largest tested successful concurrency is the largest successful point in that
+run, not proof of an absolute capacity limit or production latency target. The
+throughput knee remains a workload-specific recommendation.
+
+Speed receipts use `sixcat-speed-v3`; summaries use `sixcat-speed-summary-v2`.
+Preserve the workload, request settings, reasoning evidence, count sources and
+metric qualifications with published numbers. Speed remains unscored and separate
+from the 120-item quality evaluation.
 
 ## Score contract
 

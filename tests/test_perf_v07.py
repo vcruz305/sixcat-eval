@@ -210,8 +210,8 @@ def test_stream_options_has_one_compatibility_fallback():
             deadline=time.monotonic() + 5,
         )
     assert result["succeeded"] == 4
-    assert state["fallbacks"] == 5
-    assert state["posts"] == 10
+    assert state["fallbacks"] == 1
+    assert state["posts"] == 6
     assert result["aggregate_output_tps"] > 0
     assert result["request_rps"] > 0
 
@@ -253,7 +253,7 @@ def test_speed_cli_fixed_concurrency_writes_json(tmp_path):
         ])
     assert rc == 0
     report = json.loads(output.read_text())
-    assert report["schema"] == "sixcat-speed-v2"
+    assert report["schema"] == "sixcat-speed-v3"
     assert report["selected_concurrency"] == 2
     assert report["curve"] is None
     assert report["confirmation"]["ttft"]["p95"] > 0
@@ -369,6 +369,7 @@ def test_one_command_runs_decode_balanced_and_prefill_suite(tmp_path):
         rc = speed_main([
             "--base-url", url,
             "--model", "fixture",
+            "--profile", "all",
             "--concurrency", "2",
             "--samples", "2",
             "--max-seconds", "20",
@@ -376,7 +377,7 @@ def test_one_command_runs_decode_balanced_and_prefill_suite(tmp_path):
         ])
     assert rc == 0
     report = json.loads(output.read_text())
-    assert report["schema"] == "sixcat-speed-v2"
+    assert report["schema"] == "sixcat-speed-v3"
     assert report["requested_profile"] == "all"
     assert set(report["profiles"]) == {"decode", "balanced", "prefill"}
     assert report["profiles"]["decode"]["workload"]["max_tokens"] == 512
@@ -428,14 +429,15 @@ def test_speed_summary_uses_c1_decode_prefill_and_balanced_knee():
     assert summary["ttft"]["p50_ms"] == pytest.approx(390)
     assert summary["ttft"]["p95_ms"] == pytest.approx(710)
     assert summary["max_usable_concurrency"] == 4
-    assert summary["max_usable_concurrency_evidence"] == "measured-balanced-curve"
-    assert summary["copy_paste"] == (
-        "**Decode:** 81.2 tok/s max, 77.6 tok/s p50\n"
-        "**Prefill:** 1,940.0 tok/s p50\n"
-        "**Balanced serving:** 132.0 tok/s aggregate @ C=4\n"
-        "**TTFT:** 390 ms p50 / 710 ms p95\n"
-        "**Max usable concurrency:** 4"
-    )
+    assert summary["max_usable_concurrency_evidence"] == "largest-tested-successful-level"
+    assert summary["decode"]["source_phase"] == "discovery-only"
+    assert "**Effective prefill:** 1,940.0 tok/s p50" in summary["copy_paste"]
+    assert "**Serving throughput:** 132.0 tok/s aggregate @ C=4" in summary["copy_paste"]
+    assert "**TTFT:** 390 ms p50" in summary["copy_paste"]
+    assert "**Largest tested successful concurrency:** 4" in summary["copy_paste"]
+    assert "best sustained" not in summary["copy_paste"]
+    assert any("discovery-only" in note for note in summary["measurement_notes"])
+
 
 
 def test_speed_json_summary_is_last_and_copy_ready(tmp_path):
@@ -458,7 +460,7 @@ def test_speed_json_summary_is_last_and_copy_ready(tmp_path):
         "max_usable_concurrency", "copy_paste",
     }
     assert "**Decode:**" in report["summary"]["copy_paste"]
-    assert "**Prefill:**" in report["summary"]["copy_paste"]
-    assert "**Balanced serving:**" in report["summary"]["copy_paste"]
+    assert "**Effective prefill:**" in report["summary"]["copy_paste"]
+    assert "**Serving throughput:**" in report["summary"]["copy_paste"]
     assert "**TTFT:**" in report["summary"]["copy_paste"]
-    assert "**Max usable concurrency:**" in report["summary"]["copy_paste"]
+    assert report["summary"]["max_usable_concurrency_evidence"] == "not-measured"

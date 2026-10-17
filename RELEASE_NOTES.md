@@ -2,6 +2,46 @@
 
 > **Unreleased on main:** Community Results export, opt-in PR submission, generated README table and trusted-base validation. No version bump, tag or release has been created for this work. See [community/README.md](community/README.md).
 
+## Unreleased on main — quick speed benchmarks with thinking on
+
+- Speed now requests thinking on by default; `--thinking off` is an explicit
+  comparison. Strict sampling remains the default, with vendor/custom policies
+  still selectable.
+- Added the default `quick` profile: concurrency 1, one excluded warmup using the
+  measured workload shape, five measured requests, a 512-word prompt body and a
+  256-token output cap. Metadata, warmup and measurement share a 120-second budget.
+- The larger decode/balanced/prefill suite remains available with `--profile all`,
+  automatic concurrency discovery, 32 requests per confirmation and a shared
+  600-second default budget. `--auto-concurrency` opts quick into discovery;
+  `--concurrency N` selects a fixed concurrency.
+- Replaced repeated short-word prompts with versioned synthetic prose/code tasks.
+  Receipts distinguish prompt words from actual tokens and report counts and cache
+  information when available.
+- Client decode timing ends at the last generated output, excluding trailing usage,
+  completion signals and cleanup. Stream errors and interrupted output without
+  valid completion evidence no longer count as successful.
+- Added first-answer timing separately from first generated output, observations
+  of reasoning, protections for hidden reasoning and incompatible counts, and
+  explicit availability/qualification details.
+- Added `--reasoning-visibility auto|streamed|hidden` and optional
+  `--per-chunk-usage`. Operator declarations remain separate from observed
+  evidence; supported continuous usage corrects for multiple first-chunk tokens.
+- Narrowed compatibility retries to explicit unsupported stream options, shared
+  their timeout and cached negotiated capabilities through warmup and measurement.
+- Single-stream headlines prefer confirmed concurrency-1 measurements. Larger
+  auto-concurrency decode/prefill runs also confirm concurrency 1 when needed.
+- Headlines use median, observed range and sample count; removed "best sustained"
+  wording. Effective API prefill, native timings, individual decode speed and
+  aggregate serving throughput remain distinct.
+- Output-cap and answer-start evidence prevent capped reasoning runs from being
+  presented as completed-answer latency. Partial results are saved with incomplete
+  status and a nonzero exit when the requested run cannot finish.
+- Advanced speed receipts to `sixcat-speed-v3` and summaries to
+  `sixcat-speed-summary-v2`. Package version, scoring, release tags and community
+  submission behavior are unchanged.
+
+## Released in 0.8.3
+
 Restore the requested standard scope for one-line Hermes evaluations:
 **120 scored items, six categories, including all 20 HumanEval Code items.**
 
