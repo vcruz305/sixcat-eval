@@ -177,7 +177,7 @@ def test_resolve_cli_does_not_instantiate_inference_target(monkeypatch, capsys, 
 def test_readme_skill_and_guide_have_same_one_line_contract():
     root = Path(__file__).resolve().parents[1]
     sentence = "Run sixcat eval against the Hermes provider nous portal and the model Nemotron ultra free."
-    for path in (root / "README.md", root / "docs/hermes-nous.md", root / ".hermes/skills/sixcat-eval/SKILL.md"):
+    for path in (root / "docs/hermes.md", root / "docs/hermes-nous.md", root / ".hermes/skills/sixcat-eval/SKILL.md"):
         assert sentence in path.read_text()
     skill = (root / ".hermes/skills/sixcat-eval/SKILL.md").read_text()
     assert skill.index("## One-line requests") < skill.index("## Procedure (optional interactive wizard)")
@@ -235,7 +235,7 @@ def test_cli_only_sets_price_filter_when_explicitly_requested(monkeypatch, capsy
 
 def test_operator_docs_do_not_impose_a_price_requirement_from_an_example():
     root = Path(__file__).resolve().parents[1]
-    for relative in ("README.md", "AGENTS.md", "docs/hermes-nous.md", ".hermes/skills/sixcat-eval/SKILL.md"):
+    for relative in ("docs/hermes.md", "AGENTS.md", "docs/hermes-nous.md", ".hermes/skills/sixcat-eval/SKILL.md"):
         text = (root / relative).read_text()
         assert "No price filter by default" in text
         assert "free is a constraint" not in text
