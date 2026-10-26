@@ -445,6 +445,55 @@ GitHub Actions tests Python 3.11–3.14 on Linux, plus Windows and macOS; execut
 
 Public scores posted by [Victor (@ViC305)](https://x.com/ViC305) are transcribed in [Posted results](docs/posted-results.md). The v0.5.1 receipts stay on that archived page. The posted GLM-5.3 88.3 slice is a different run from the archived 91.7 receipt, and the posted Qwen3.8-27B board rows are different setups from the archived EXL3 4.00bpw 75.0 receipt.
 
+Sorted by overall, highest first. Every figure is copied from [Posted results](docs/posted-results.md).
+
+| date (PT) | model | precision | hardware / serving | weights (HF) | sixcat | n | overall | decode tok/s | post |
+|---|---|---|---|---|---|---|---:|---|---|
+| 2026-10-17 | Qwen3.8-Flash-Next (FP4-Local, TP1) ⓐ | FP4-Local | 1x DGX Spark · b12x vLLM + MTP4 | [nvidia/Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local) · upstream, linked in article | — (vendor policy, thinking on) | 120 (109/120) | 90.8 | 68 | [post](https://x.com/ViC305/status/2111523015234384166) |
+| 2026-08-22 | Ox Alpha (via Nous Portal) † | cloud | hosted · Nous Portal API | — | — | 60-item slice (54/60) | 90.0 (partial) † | n/p | [post](https://x.com/ViC305/status/2091361652776292473) |
+| 2026-10-17 | Qwen3.8-Flash-Next NVFP4 (NVIDIA) | NVFP4 | 1x DGX Spark · b12x vLLM, base decode | [nvidia/Qwen3.8-Flash-Next-NVFP4](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4) · upstream, linked in article | — (vendor policy, thinking on) | 119 | 89.9 | 18.70 | [post](https://x.com/ViC305/status/2111523015234384166) |
+| 2026-10-17 | Qwen3.8-Flash-Next FP4-Local TP2 † | FP4-Local | 2x DGX Spark · distributed b12x vLLM | [nvidia/Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local) · upstream, linked in article | — (vendor policy, thinking on) | 118/120 eligible | 89.72 (partial) † | 46.35 | [post](https://x.com/ViC305/status/2111523015234384166) |
+| 2026-09-09 | Qwen3.8-Flash-Next (GGUF Q4_K_M, BF16 PLE on NVMe, MTP on) ‖ | GGUF Q4_K_M (BF16 PLE on NVMe, MTP on) | 1x DGX Spark · llama.cpp | [vcruz305/Qwen3.8-Flash-Next-GGUF](https://huggingface.co/vcruz305/Qwen3.8-Flash-Next-GGUF) · own, matched by name | v0.5.1 (vendor, thinking on) | 120 | 89.2 | 32.9 (p50) | [post](https://x.com/ViC305/status/2097723351993385463) |
+| 2026-08-22 | GLM-5.3 (via ZenMux) † ‡ | cloud | hosted · ZenMux API | [zai-org/GLM-5.3](https://huggingface.co/zai-org/GLM-5.3) · upstream, variant not stated | — | 60-item slice (53/60) | 88.3 (partial) † ‡ | n/p | [post](https://x.com/ViC305/status/2091361652776292473) |
+| 2026-09-09 | Qwen3.8-Flash-Next (EXL3 3.05bpw) ‖ ◊ | EXL3 3.05bpw (turboderp 3.05bpw_h5_ng5 per his recipe) | 1x DGX Spark · vLLM + vllm-exl3 | [turboderp/Qwen3.8-Flash-Next-exl3@3.05bpw_h5_ng5](https://huggingface.co/turboderp/Qwen3.8-Flash-Next-exl3/tree/3.05bpw_h5_ng5) · upstream, least certain ◊ | v0.5.1 (vendor, thinking on) | 120 | 86.7 | 47.6 (p50) | [post](https://x.com/ViC305/status/2097723351993385463) |
+| 2026-10-26 | Nanbeige4.3-33B (dense, Llama-arch) ⓓ | SAGE-EXL3 4.50bpw (4.499880554 decoder-body bpw, 8-bit embeddings/head), 18.35 GiB | 1x NVIDIA RTX 4090 (24 GB) · ExLlamaV3 + TabbyAPI, 36,864 ctx, Q4 KV, batch 1 | [vcruz305/Nanbeige4.3-33B-SAGE-EXL3-4.50bpw](https://huggingface.co/vcruz305/Nanbeige4.3-33B-SAGE-EXL3-4.50bpw) · own | v0.8.3 (strict, thinking ON) | 120 (104/120) | 86.67 | 33.82 (token-weighted, 107 requests) | [post](https://x.com/ViC305/status/2114763560345805041) |
+| 2026-10-17 | Qwen3.8-Flash-Next EXL3 4.05bpw (turboderp) | EXL3 4.05bpw | 1x DGX Spark · ExLlamaV3 + TabbyAPI | [turboderp/Qwen3.8-Flash-Next-exl3@4.05bpw_h6_ng6](https://huggingface.co/turboderp/Qwen3.8-Flash-Next-exl3/tree/4.05bpw_h6_ng6) · upstream, linked in article | — (vendor policy, thinking on) | 119 | 86.5 | 31.97 | [post](https://x.com/ViC305/status/2111523015234384166) |
+| 2026-08-19 | Ornith-1.5-35B-A3B ⓑ | NVFP4 (ModelOpt) | 1x DGX Spark · vLLM, single node TP1 | [ornith-ai/Ornith-1.5-35B-A3B-NVFP4](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-NVFP4) · upstream, named in post | pre-0.5 | — | 85.0 | ~78 (prefill ~3891) | [post](https://x.com/ViC305/status/2090094880882393484) |
+| 2026-10-16 | Nemotron 3.5 Super VL 120B-A12B | NVFP4 (NVIDIA) | 1x DGX Spark · vLLM 0.31.0 + FlashInfer, MTP-5 | [nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4) · upstream, linked in post | — | 120 (101/120) | 84.17 | 37.3 | [post](https://x.com/ViC305/status/2111165770159845500) |
+| 2026-08-25 | Apodex-1.1-mini | NVFP4 experts, FP8 attn/KV | 1x DGX Spark GB10 · SGLang (flashinfer_cutlass) | [apodex/Apodex-1.1-mini-NVFP4](https://huggingface.co/apodex/Apodex-1.1-mini-NVFP4) · upstream, linked in post | v0.4.4 (high-budget rerun) | 120 | 83.3 | 83 | [post](https://x.com/ViC305/status/2092349512044212705) |
+| 2026-08-19 | Qwen3.8-27B stock Q4 § | Q4 | — | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) · upstream base, Q4 file not identified | pre-0.5 | — | 82.3 § | n/p | [post](https://x.com/ViC305/status/2090094880882393484) |
+| 2026-08-19 | Ornith-1.5 GGUF Q4_K_M ¶ | GGUF Q4_K_M | Quadro RTX 6000 24GB · — ¶ | — | pre-0.5 | — | 80.6 | n/p | [post](https://x.com/ViC305/status/2090094880882393484) |
+| 2026-08-19 | Qwen3.8-27B AEON Q4+MTP § | Q4 + MTP | — | [vcruz305/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-GGUF](https://huggingface.co/vcruz305/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-GGUF) · own, matched by name | pre-0.5 | — | 80.0 § | n/p | [post](https://x.com/ViC305/status/2090094880882393484) |
+| 2026-10-13 | MiniCPM-V 4.7 35B-A3B ⓒ | SAGE-EXL3 3.74bpw | 1x DGX Spark · ExLlamaV3 + TabbyAPI | [vcruz305/MiniCPM-V-4.7-35B-A3B-EXL3-SAGE-3.74bpw](https://huggingface.co/vcruz305/MiniCPM-V-4.7-35B-A3B-EXL3-SAGE-3.74bpw) · own, linked in post | v0.7.0 | — | 79.17 | 69.7 (p50); 125 on REXL3 | [post](https://x.com/ViC305/status/2110095908386042323) |
+| 2026-10-16 | Nemotron 3.5 Bolt 74B-A9B (24GB IQ2) | Mixed ModelOpt IQ2 | 1x DGX Spark · vLLM (no draft for quality run) | [nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB) · upstream, linked in post | — | 120 (93/120) | 77.50 | 30.9 (no draft) / 87.8 w/ LiLiCorr DFlash | [post](https://x.com/ViC305/status/2111165770159845500) |
+| 2026-08-19 | Nemotron 3.5 Lightning NVFP4 | NVFP4 | — | [nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) · upstream | pre-0.5 | — | 57.9 | n/p | [post](https://x.com/ViC305/status/2090094880882393484) |
+
+Categories, same order. **n/p** was not posted. A letter on a score is defined in [Posted results](docs/posted-results.md).
+
+| model | knowledge | math | truth | instruct | code | tools |
+|---|---:|---:|---:|---:|---:|---:|
+| Qwen3.8-Flash-Next (FP4-Local, TP1) ⓐ | 90.0 ⓐ | 100.0 ⓐ | 80.0 ⓐ | 95.0 ⓐ | 95.0 | 85.0 ⓐ |
+| Ox Alpha (via Nous Portal) † | 80 | 100 | 90 | n/p | n/p | n/p |
+| Qwen3.8-Flash-Next NVFP4 (NVIDIA) | n/p | n/p | n/p | n/p | n/p | n/p |
+| Qwen3.8-Flash-Next FP4-Local TP2 † | n/p | n/p | n/p | n/p | n/p | n/p |
+| Qwen3.8-Flash-Next (GGUF Q4_K_M, BF16 PLE on NVMe, MTP on) ‖ | 85 | 100 | 85 | 90 | 85 | 90 |
+| GLM-5.3 (via ZenMux) † ‡ | 80 | 100 | 85 | n/p | n/p | n/p |
+| Qwen3.8-Flash-Next (EXL3 3.05bpw) ‖ ◊ | 85 | 100 | 80 | 85 | 90 | 80 |
+| Nanbeige4.3-33B (dense, Llama-arch) ⓓ | 65 | 100 | 85 | 95 | 85 | 90 |
+| Qwen3.8-Flash-Next EXL3 4.05bpw (turboderp) | n/p | n/p | n/p | n/p | 100 | n/p |
+| Ornith-1.5-35B-A3B ⓑ | 85.0 ⓑ | 95.0 | 75.0 ⓑ | 70.0 ⓑ | 85.0 ⓑ | 100.0 |
+| Nemotron 3.5 Super VL 120B-A12B | 85 | 100 | 85 | 50 | 100 | 85 |
+| Apodex-1.1-mini | 65 | 95 | 80 | 90 | 80 | 90 |
+| Qwen3.8-27B stock Q4 § | n/p | n/p | n/p | n/p | n/p | n/p |
+| Ornith-1.5 GGUF Q4_K_M ¶ | n/p | n/p | n/p | n/p | n/p | n/p |
+| Qwen3.8-27B AEON Q4+MTP § | n/p | n/p | n/p | n/p | n/p | n/p |
+| MiniCPM-V 4.7 35B-A3B ⓒ | 50 ⓒ | 100 | 80 ⓒ | 70 ⓒ | 85 | 90 |
+| Nemotron 3.5 Bolt 74B-A9B (24GB IQ2) | 60 | 100 | 80 | 50 | 85 | 90 |
+| Nemotron 3.5 Lightning NVFP4 | n/p | n/p | n/p | n/p | n/p | n/p |
+
+- **ⓓ** Nanbeige4.3-33B, overall 86.67, is from the owner's model card [vcruz305/Nanbeige4.3-33B-SAGE-EXL3-4.50bpw](https://huggingface.co/vcruz305/Nanbeige4.3-33B-SAGE-EXL3-4.50bpw) and recipe [Nanbeige4.3-33B-SAGE-EXL3-recipe](https://github.com/vcruz305/Nanbeige4.3-33B-SAGE-EXL3-recipe). The X post is [post](https://x.com/ViC305/status/2114763560345805041). Two Code completions hit the 32,768-token output cap and are scored failures. This is the first row in the table run on an RTX 4090 rather than a DGX Spark.
+- Marker definitions are in [Posted results](docs/posted-results.md).
+
 The tiny datasets originate from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks); IFEval constraints originate from [Google Research](https://github.com/google-research/google-research/tree/master/instruction_following_eval); HumanEval originates from [OpenAI](https://github.com/openai/human-eval). Frozen HumanEval challenge ordering retains the source attribution in `sixcat/selection.py`. SixCat's custom zero-shot subset scores are not official full-benchmark or IRT estimates. No claim of training-contamination immunity is made for public tasks.
 
 MIT for the harness; upstream evaluation items retain their original licenses. Historical acknowledgments, evidence and measured results remain in the archived README and release notes.
