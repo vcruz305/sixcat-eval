@@ -443,6 +443,8 @@ GitHub Actions tests Python 3.11–3.14 on Linux, plus Windows and macOS; execut
 
 [The original 0.5.1 README](README-v0.5.1.md), including its model results and self-evaluation caveats, is preserved unchanged. Do not compare those scores directly with parser-v5 results. [Release notes](RELEASE_NOTES.md) describe the migration.
 
+Public scores posted by [Victor (@ViC305)](https://x.com/ViC305) are transcribed in [Posted results](docs/posted-results.md). The v0.5.1 receipts stay on that archived page. The posted GLM-5.3 88.3 slice is a different run from the archived 91.7 receipt, and the posted Qwen3.8-27B board rows are different setups from the archived EXL3 4.00bpw 75.0 receipt.
+
 The tiny datasets originate from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks); IFEval constraints originate from [Google Research](https://github.com/google-research/google-research/tree/master/instruction_following_eval); HumanEval originates from [OpenAI](https://github.com/openai/human-eval). Frozen HumanEval challenge ordering retains the source attribution in `sixcat/selection.py`. SixCat's custom zero-shot subset scores are not official full-benchmark or IRT estimates. No claim of training-contamination immunity is made for public tasks.
 
 MIT for the harness; upstream evaluation items retain their original licenses. Historical acknowledgments, evidence and measured results remain in the archived README and release notes.
