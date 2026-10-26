@@ -2,6 +2,8 @@
 
 > **Unreleased on main:** Community Results export, opt-in PR submission, generated README table and trusted-base validation. No version bump, tag or release has been created for this work. See [community/README.md](community/README.md).
 
+> **Posted historical results:** Public SixCat scores from [Victor (@ViC305)](https://x.com/ViC305) are transcribed in [docs/posted-results.md](docs/posted-results.md) and linked from the README Historical results section. The archived receipts in [README-v0.5.1.md](README-v0.5.1.md) are unchanged. This transcription is not a benchmark run and does not change the score contract.
+
 Restore the requested standard scope for one-line Hermes evaluations:
 **120 scored items, six categories, including all 20 HumanEval Code items.**
 
@@ -260,4 +262,4 @@ Python 3.11–3.14 Linux testing plus Windows/macOS, bounded unit and loopback i
 
 Use fresh `--out`/`--log` paths for 0.6.0. Parser-v4 journals do not resume into v5, and old scores are not silently comparable. Existing v2/v3/v4 result files remain readable under their original identities. Later failure retries no longer replace the first-response overall. Any old score assembled by selectively retrying failures remains a legacy latest-attempt result.
 
-All previous release notes are preserved unchanged in [RELEASE_NOTES-v0.5.1.md](RELEASE_NOTES-v0.5.1.md). Original measured examples and caveats are preserved in [README-v0.5.1.md](README-v0.5.1.md).
+All previous release notes are preserved unchanged in [RELEASE_NOTES-v0.5.1.md](RELEASE_NOTES-v0.5.1.md). Original measured examples and caveats are preserved in [README-v0.5.1.md](README-v0.5.1.md). Later public scores posted by Victor (@ViC305) are transcribed in [docs/posted-results.md](docs/posted-results.md).
