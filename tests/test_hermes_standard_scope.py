@@ -24,7 +24,7 @@ from sixcat.tools import ITEMS
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_DOCS = [
-    "README.md",
+    "docs/hermes.md",
     "docs/hermes-nous.md",
     ".hermes/skills/sixcat-eval/SKILL.md",
     "AGENTS.md",
@@ -44,7 +44,7 @@ def test_operator_docs_default_to_120_and_local_code(name):
         assert old not in flat
 
 
-@pytest.mark.parametrize("name", ["README.md", "docs/hermes-nous.md"])
+@pytest.mark.parametrize("name", ["docs/hermes.md", "docs/hermes-nous.md"])
 def test_copyable_run_commands_do_not_disable_code(name):
     text = (ROOT / name).read_text(encoding="utf-8")
     blocks = re.findall(r"```(?:bash|text)\n(.*?)```", text, re.DOTALL)

@@ -64,7 +64,9 @@ def test_hermes_console_entrypoint_and_readme_workflow_are_packaged():
     assert project["scripts"]["sixcat-hermes"] == "sixcat.hermes:main"
     assert callable(hermes.main)
     readme = (root / "README.md").read_text(encoding="utf-8")
+    guide = (root / "docs/hermes.md").read_text(encoding="utf-8")
     for command in ("inspect", "smoke", "preflight", "run"):
-        assert f"-m sixcat.hermes {command}" in readme
-    assert "--query-file sixcat-controller.txt" in readme
+        assert f"-m sixcat.hermes {command}" in guide
+    assert "--query-file sixcat-controller.txt" in guide
+    assert "docs/hermes.md" in readme
     assert (root / "docs/hermes-nous.md").is_file()

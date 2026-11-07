@@ -1,7 +1,7 @@
 # Sixcat operator entry point
 
-For a request to run a model evaluation, read the README's **Just ask your agent**
-section and `.hermes/skills/sixcat-eval/SKILL.md` before launching anything.
+For a request to run a model evaluation, read [Just ask your agent](docs/hermes.md#just-ask-your-agent)
+and `.hermes/skills/sixcat-eval/SKILL.md` before launching anything.
 A provider and model name are sufficient user input; the skill owns the defaults,
 authentication reuse, model discovery, unique output names, execution and reporting.
 Do not ask the user to copy a long operator prompt or fill optional settings.

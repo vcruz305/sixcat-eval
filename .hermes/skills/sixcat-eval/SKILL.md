@@ -75,7 +75,7 @@ Only a real blocker (missing authentication/installation, a local Python
 execution failure, no model match) or genuine model ambiguity interrupts this path.
 The absence of a container or VM is not a blocker for local code execution.
 A long operator prompt, exact ID supplied by the user, and manual result paths
-are **not prerequisites**. The detailed commands belong in this skill and README.
+are **not prerequisites**. The detailed commands belong in this skill and `docs/hermes.md`.
 
 ## Non-interactive and Nous Portal runs
 
@@ -88,8 +88,8 @@ ask to customize settings or need help choosing an unspecified target.
 Use the Python 3.11+ interpreter containing Hermes and Sixcat, not whichever
 `python` the terminal happens to resolve. The installed entry point is
 `python -m sixcat.hermes`; `scripts/hermes_runner.py` remains a compatibility shim.
-See `docs/hermes-nous.md` for setup, smoke tests, exact commands and controller
-prompts. `inspect` resolves configuration/authentication but does not verify
+See `docs/hermes.md` and `docs/hermes-nous.md` for setup, smoke tests, exact
+commands and controller prompts. `inspect` resolves configuration/authentication but does not verify
 inference or that a model is free. `smoke` sends one unscored real request and
 consumes provider quota. A smoke failure is not a Sixcat benchmark score.
 
