@@ -16,6 +16,11 @@ REQUIRED_DATASETS = {
     "tiny_mmlu.jsonl",
     "tiny_truthfulqa.jsonl",
     "tiny_winogrande.jsonl",
+    # challenge-v2 (opt-in profile); see docs/challenge-v2.md
+    "v2_code.jsonl",
+    "v2_instruct.jsonl",
+    "v2_knowledge.jsonl",
+    "v2_math.jsonl",
 }
 
 

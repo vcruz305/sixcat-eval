@@ -11,6 +11,8 @@
 
 Each category is `100 * correct / scored`. Overall is the unweighted mean of nonempty category scores. **A partial result is labeled incomplete and is not comparable by default.** Missing items are not silently counted as model failures. The three no-tool challenges test abstention, not the correctness of their free-text answers.
 
+This table describes the default `challenge-v1` selection. The opt-in `--profile challenge-v2` keeps the same six categories, counts and scoring arithmetic with different, harder items; see [challenge-v2](challenge-v2.md).
+
 Parser **v5** rejects option letters outside the displayed choices, does not confuse words such as “definitely” with option D, marks conflicting answers ambiguous, strips incomplete inline thinking, and parses full supported numeric expressions instead of accepting their prefixes. Tool arguments distinguish JSON booleans from numbers. These results are not silently comparable with parser-v4 results.
 
 ## First responses stay first

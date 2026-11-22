@@ -174,6 +174,17 @@ EvalPlus export does **not** install or run EvalPlus and does not claim a HumanE
 
 `--full` selects **884 items**: 400 Knowledge, 100 Math, 100 Truth, 100 Instruct, 164 Code and 20 Tools. `--skip-code-exec` reduces full mode to 720. Full mode still has the time cap; only `--full --max-minutes 0` removes it. The separately bundled 541-row IFEval source is not an extra full-mode category.
 
+### Harder opt-in selection: challenge-v2 (unreleased on main)
+
+```bash
+python -m sixcat --base-url http://127.0.0.1:8085/v1 --model my-model \
+  --profile challenge-v2 --concurrency 4 --max-minutes 30 --out results/my-model.v2.json
+```
+
+`--profile challenge-v2` swaps in a harder 120: ten-option MMLU-Pro Knowledge, original multi-step Math, Truth with shuffled answer positions, stacked-constraint Instruct, original Code problems with large hidden inputs, and an 18-tool Tools set. It exists because Math, Tools and Code had saturated on `challenge-v1`.
+
+It is **opt-in and uncalibrated**: no model panel has been run against it yet. v2 scores are not comparable with v1 scores, are not eligible for Community Results, and need their own result files. The default run, its 120 items and its benchmark fingerprint are unchanged. Details and limits: [challenge-v2](docs/challenge-v2.md).
+
 ### Stdio harness transport
 
 `--transport stdio` remains a serial request/response protocol, with real response deadlines and desynchronization protection. It requires `--concurrency 1`; use HTTP for parallel requests. See [the stdio protocol](docs/harness-stdio.md). A harness must not expose answer keys, add agent tools, or quietly substitute a different model; stdio is not automatically equivalent to independent raw-model evaluation.
@@ -188,6 +199,7 @@ For detailed info, read:
 
 - [Posted SixCat results](docs/posted-results.md) — Public score transcription, marker definitions, and extract notes for the tables above.
 - [Score contract](docs/scoring.md) — Category sources and verdicts, parser v5, and first-response resume.
+- [challenge-v2](docs/challenge-v2.md) — The harder opt-in selection: what is in each category, how it was built and verified, and what it does not do yet.
 - [Hermes and Nous Portal](docs/hermes.md) — Install, inspect, smoke, run, and a Hermes model operating the benchmark.
 - [Qualify Nous Portal models from Hermes](docs/hermes-nous.md) — Catalog name resolution, environment setup, troubleshooting, and the copyable controller prompt.
 - [Adaptive concurrency and serving-speed benchmark](docs/serving-speed.md) — Concurrency knee selection and the decode, balanced, and prefill speed suite.
@@ -238,6 +250,6 @@ GitHub Actions tests Python 3.11–3.14 on Linux, plus Windows and macOS; execut
 
 ## Attribution and license
 
-The tiny datasets originate from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks); IFEval constraints originate from [Google Research](https://github.com/google-research/google-research/tree/master/instruction_following_eval); HumanEval originates from [OpenAI](https://github.com/openai/human-eval). Frozen HumanEval challenge ordering retains the source attribution in `sixcat/selection.py`. SixCat's custom zero-shot subset scores are not official full-benchmark or IRT estimates. No claim of training-contamination immunity is made for public tasks.
+The tiny datasets originate from [tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks); IFEval constraints originate from [Google Research](https://github.com/google-research/google-research/tree/master/instruction_following_eval); HumanEval originates from [OpenAI](https://github.com/openai/human-eval). Frozen HumanEval challenge ordering retains the source attribution in `sixcat/selection.py`. The opt-in `challenge-v2` Knowledge items originate from [MMLU-Pro](https://github.com/TIGER-AI-Lab/MMLU-Pro) (Apache-2.0); its Math, Instruct, Code and Tools items are original to this repository. SixCat's custom zero-shot subset scores are not official full-benchmark or IRT estimates. No claim of training-contamination immunity is made for public tasks.
 
 MIT for the harness; upstream evaluation items retain their original licenses. Historical acknowledgments, evidence and measured results remain in the archived README and release notes.
