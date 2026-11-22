@@ -2,6 +2,8 @@
 
 > **Unreleased on main:** Community Results export, opt-in PR submission, generated README table and trusted-base validation. No version bump, tag or release has been created for this work. See [community/README.md](community/README.md).
 
+> **Unreleased on main:** `--profile challenge-v2`, a harder opt-in 120-item selection (new Knowledge, Math, Instruct, Code and Tools content; Truth with shuffled answer positions). The default `challenge-v1` run, its items and its benchmark fingerprint are unchanged. v2 is uncalibrated, not comparable with v1 and not eligible for Community Results. See [docs/challenge-v2.md](docs/challenge-v2.md).
+
 > **Posted historical results:** Public SixCat scores from [Victor (@ViC305)](https://x.com/ViC305) are transcribed in [docs/posted-results.md](docs/posted-results.md) and linked from the README Historical results section. The archived receipts in [README-v0.5.1.md](README-v0.5.1.md) are unchanged. This transcription is not a benchmark run and does not change the score contract.
 
 Restore the requested standard scope for one-line Hermes evaluations:

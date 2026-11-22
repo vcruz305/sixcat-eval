@@ -28,6 +28,8 @@ from .report import (
 from .run import CATEGORIES, render_table, retry_plan_from_result, run_battery
 from .selection import SELECTION_FINGERPRINT, SELECTION_PROFILE
 
+PROFILES = (SELECTION_PROFILE, "challenge-v2")
+
 
 def parse_budget_overrides(specs: list[str]) -> dict[str, int]:
     """Parse repeatable CATEGORY=N overrides with fail-fast validation."""
@@ -60,12 +62,20 @@ def _journal_identity(
     transport: str = "openai",
     server_identity: dict | None = None,
     artifact_id: str | None = None,
+    profile: str = SELECTION_PROFILE,
 ) -> dict:
+    if profile == SELECTION_PROFILE:
+        benchmark_fingerprint = benchmark_manifest(limit, skip_code_exec)["fingerprint"]
+        selection_fingerprint = SELECTION_FINGERPRINT
+    else:
+        from .challenge_v2 import SELECTION_FINGERPRINT_V2, benchmark_manifest_v2
+        benchmark_fingerprint = benchmark_manifest_v2(limit, skip_code_exec)["fingerprint"]
+        selection_fingerprint = SELECTION_FINGERPRINT_V2
     identity = {
         "result_schema": RESULT_SCHEMA,
         "attempt_policy": ATTEMPT_POLICY,
         "schedule": SCHEDULE,
-        "benchmark_fingerprint": benchmark_manifest(limit, skip_code_exec)["fingerprint"],
+        "benchmark_fingerprint": benchmark_fingerprint,
         "server_identity": server_identity,
         "artifact_id": artifact_id,
         "parser": PARSER_VERSION,
@@ -76,8 +86,8 @@ def _journal_identity(
         "budgets": dict(policy.budgets),
         "limit": limit,
         "limit_scope": "per_category",
-        "selection_profile": SELECTION_PROFILE,
-        "selection_fingerprint": SELECTION_FINGERPRINT,
+        "selection_profile": profile,
+        "selection_fingerprint": selection_fingerprint,
         "request_timeout_seconds": float(request_timeout),
         "code_execution": "disabled" if skip_code_exec else "host-guarded",
     }
@@ -168,6 +178,14 @@ def _run_main(argv: list[str]) -> int:
         help="Ignore --limit and run the entire shipped sets (884 items).",
     )
     p.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=SELECTION_PROFILE,
+        help="Item selection. challenge-v1 (default) is the frozen standard 120. challenge-v2 is a harder, "
+        "opt-in 120 with different content; its scores are not comparable with v1 and are not eligible "
+        "for Community Results.",
+    )
+    p.add_argument(
         "--max-minutes",
         type=float,
         default=30.0,
@@ -249,6 +267,12 @@ def _run_main(argv: list[str]) -> int:
         p.error("--max-minutes must be finite and non-negative")
     if args.limit <= 0:
         p.error("--limit must be positive (use --full for the entire corpus)")
+    if args.profile != SELECTION_PROFILE:
+        from .challenge_v2 import check_limit
+        try:
+            check_limit(None if args.full else args.limit)
+        except ValueError as exc:
+            p.error(str(exc))
     if args.ctx is not None and args.ctx <= 0:
         p.error("--ctx must be a positive token count")
     if args.concurrency < 1:
@@ -408,6 +432,7 @@ def _run_main(argv: list[str]) -> int:
             transport=args.transport,
             server_identity=client.server_identity,
             artifact_id=args.artifact_id,
+            profile=args.profile,
         )
         if args.retry and not Path(log_path).exists():
             p.error(f"--retry requires an existing journal at {log_path}")
@@ -428,8 +453,13 @@ def _run_main(argv: list[str]) -> int:
             f"log {log_path} resume={not args.no_resume} max_minutes={args.max_minutes} concurrency={effective_concurrency}",
             flush=True,
         )
+        if args.profile == SELECTION_PROFILE:
+            battery = run_battery
+        else:
+            from .challenge_v2 import run_battery_v2 as battery
+            print(f"profile {args.profile}: harder opt-in selection; not comparable with challenge-v1 scores", flush=True)
         try:
-            result = run_battery(
+            result = battery(
                 client,
                 limit=limit,
                 session=session,
@@ -526,6 +556,10 @@ def _retry_plan_main(argv: list[str]) -> int:
         if not isinstance(document, dict):
             raise ValueError("result must be a JSON object")
         plan = retry_plan_from_result(document, retry=args.retry, result_path=str(args.result))
+        profile = document.get("selection_profile")
+        if profile in PROFILES and profile != SELECTION_PROFILE:
+            # The v1 plan builder does not know about profiles; a v2 journal only resumes under v2.
+            plan["argv"].extend(["--profile", profile])
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -631,6 +665,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
         from .community_check import main as community_main
         return community_main(args[1:])
     if args and args[0] in {"rescore", "export-evalplus"}:
+        from .v2_cli import offline_main_v2, result_profile
+        if result_profile(args[1:]) == "challenge-v2":
+            return offline_main_v2(args[1:], export=args[0] == "export-evalplus")
         from .offline import main as offline_main
         return offline_main(args[1:], export=args[0] == "export-evalplus")
     if args and args[0] == "repeat":
